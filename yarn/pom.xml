@@ -84,6 +84,13 @@
         <module>stable</module>
       </modules>
     </profile>
+
+    <profile>
+      <id>yarn-history</id>
+      <modules>
+        <module>history</module>
+      </modules>
+    </profile>
   </profiles>
 
   <build>
@@ -134,7 +141,7 @@
 
     <outputDirectory>target/scala-${scala.binary.version}/classes</outputDirectory>
     <testOutputDirectory>target/scala-${scala.binary.version}/test-classes</testOutputDirectory>
-  
+
     <resources>
       <resource>
         <directory>../common/src/main/resources</directory>

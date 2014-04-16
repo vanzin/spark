@@ -37,8 +37,8 @@ object BuildCommons {
       "sql", "streaming", "streaming-flume-sink", "streaming-flume", "streaming-kafka",
       "streaming-mqtt", "streaming-twitter", "streaming-zeromq").map(ProjectRef(buildLocation, _))
 
-  val optionallyEnabledProjects@Seq(yarn, yarnStable, yarnAlpha, java8Tests, sparkGangliaLgpl, sparkKinesisAsl) =
-    Seq("yarn", "yarn-stable", "yarn-alpha", "java8-tests", "ganglia-lgpl", "kinesis-asl")
+  val optionallyEnabledProjects@Seq(yarn, yarnStable, yarnAlpha, yarnHistory, java8Tests, sparkGangliaLgpl, sparkKinesisAsl) =
+    Seq("yarn", "yarn-stable", "yarn-alpha", "yarn-history", "java8-tests", "ganglia-lgpl", "kinesis-asl")
       .map(ProjectRef(buildLocation, _))
 
   val assemblyProjects@Seq(assembly, examples) = Seq("assembly", "examples")
@@ -86,6 +86,10 @@ object SparkBuild extends PomBuild {
         println("NOTE: SPARK_YARN is deprecated, please use -Pyarn flag.")
         profiles ++= Seq("yarn")
       }
+    }
+    if (Properties.envOrNone("SPARK_YARN_HISTORY").isDefined) {
+      println("NOTE: SPARK_YARN_HISTORY is deprecated, please use -Pyarn-history flag.")
+      profiles ++= Seq("yarn-history")
     }
     profiles
   }
@@ -290,9 +294,16 @@ object Unidoc {
     publish := {},
 
     unidocProjectFilter in(ScalaUnidoc, unidoc) :=
+<<<<<<< HEAD
       inAnyProject -- inProjects(OldDeps.project, repl, examples, tools, catalyst, yarn, yarnAlpha),
     unidocProjectFilter in(JavaUnidoc, unidoc) :=
       inAnyProject -- inProjects(OldDeps.project, repl, bagel, graphx, examples, tools, catalyst, yarn, yarnAlpha),
+=======
+      inAnyProject -- inProjects(repl, examples, tools, catalyst, yarn, yarnAlpha, yarnHistory),
+    unidocProjectFilter in(JavaUnidoc, unidoc) :=
+      inAnyProject -- inProjects(repl, bagel, graphx, examples, tools, catalyst, yarn, yarnAlpha,
+        yarnHistory),
+>>>>>>> Add spark listener to public events to the Yarn AHS.
 
     // Skip class names containing $ and some internal packages in Javadocs
     unidocAllSources in (JavaUnidoc, unidoc) := {

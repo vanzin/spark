@@ -17,10 +17,10 @@
 
 package org.apache.spark.scheduler.cluster
 
-import org.apache.hadoop.yarn.api.records.{ApplicationId, YarnApplicationState}
+import org.apache.hadoop.yarn.api.records.{ApplicationId, ApplicationReport, YarnApplicationState}
 import org.apache.spark.{SparkException, Logging, SparkContext}
 import org.apache.spark.deploy.yarn.{Client, ClientArguments, ExecutorLauncher, YarnSparkHadoopUtil}
-import org.apache.spark.scheduler.TaskSchedulerImpl
+import org.apache.spark.scheduler.{SparkListener, TaskSchedulerImpl}
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -107,6 +107,25 @@ private[spark] class YarnClientSchedulerBackend(
       // Ready to go, or already gone.
       val state = report.getYarnApplicationState()
       if (state == YarnApplicationState.RUNNING) {
+        // If Yarn history is enabled and the listener class exists, then enable it to feed data
+        // to the server.
+        //
+        // Also check that the configuration points at an AHS, otherwise the client code will
+        // not be able to connect. Since we can't directy depend on the constants from the Yarn
+        // classes (due to compatibility with older versions), the config name is hardcoded.
+        if (sc.getConf.getBoolean("spark.yarn.history.enabled", true) &&
+          sc.hadoopConfiguration.get("yarn.timeline-service.webapp.address") != null) {
+          val listenerClass = "org.apache.spark.deploy.yarn.history.YarnHistoryListener"
+          try {
+            var listener = Class.forName(listenerClass)
+              .getConstructor(classOf[SparkContext], classOf[ApplicationReport])
+              .newInstance(sc, report)
+              .asInstanceOf[SparkListener]
+            sc.addSparkListener(listener)
+          } catch {
+            case e: Exception => logDebug("Cannot instantiate Yarn history listener.", e)
+          }
+        }
         return
       } else if (state == YarnApplicationState.FINISHED ||
         state == YarnApplicationState.FAILED ||
