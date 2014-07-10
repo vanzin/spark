@@ -39,16 +39,15 @@ import org.apache.spark.util.{JsonProtocol, Utils}
 class YarnHistoryListener(private val sc: SparkContext, private val app: ApplicationReport)
   extends SparkListener with Logging {
 
-  private val ENTITY_TYPE = "SparkApplication"
-
   private val entity = new TimelineEntity()
-  entity.setEntityType(ENTITY_TYPE)
+  entity.setEntityType(YarnHistoryConstants.ENTITY_TYPE)
   entity.setEntityId(app.getApplicationId().toString())
   entity.setStartTime(app.getStartTime())
   entity.addPrimaryFilter("appName", sc.appName)
   entity.addPrimaryFilter("sparkUser", sc.sparkUser)
   entity.addOtherInfo("appName", sc.appName)
   entity.addOtherInfo("sparkUser", sc.sparkUser)
+  entity.addOtherInfo("startTime", app.getStartTime())
 
   private val eventQueue = new LinkedBlockingQueue[TimelineEvent]()
   private val worker = new YarnHistoryWorker(sc.hadoopConfiguration, entity, eventQueue)
@@ -122,6 +121,7 @@ class YarnHistoryListener(private val sc: SparkContext, private val app: Applica
   }
 
   override def onApplicationEnd(event: SparkListenerApplicationEnd) = {
+    entity.addOtherInfo("endTime", java.lang.Long.valueOf(event.time))
     enqueueEvent(event, event.time)
 
     if (workerThread != null) {
@@ -187,14 +187,16 @@ private class YarnHistoryWorker(
 
   val poison = new TimelineEvent()
   val maxEvents = 64
+  val client = TimelineClient.createTimelineClient()
 
   override def run() = {
-    val client = TimelineClient.createTimelineClient()
     try {
       client.init(conf)
       client.start()
 
       val events = new LinkedList[TimelineEvent]()
+      entity.setEvents(events)
+
       var shutdown = false
       while (!shutdown) {
         if (events.size() < maxEvents) {
@@ -205,26 +207,36 @@ private class YarnHistoryWorker(
           shutdown = true
           events.removeLast()
         }
-        if (!events.isEmpty()) {
-          logTrace("Sending %d events (last = %s)".format(events.size(),
-            events.peekLast().getEventType()))
-          entity.setEvents(events)
-          val response = client.putEntities(entity)
-
-          if (response.getErrors() != null && !response.getErrors().isEmpty()) {
-            for (e <- response.getErrors()) {
-              logWarning("Error sending event to timeline server: %s, %s, %d".format(
-                e.getEntityId(), e.getEntityType(), e.getErrorCode()))
-            }
-          } else {
-            events.clear()
-          }
+        if (!events.isEmpty() && post()) {
+          events.clear()
         }
       }
+
+      // After we're done with events, update the entity itself to indicate the
+      // application has finished.
+      entity.addPrimaryFilter("status", "finished")
+      post()
     } catch {
       case e: Exception => logWarning("Error in timeline server client.", e)
     } finally {
       client.stop()
+    }
+  }
+
+  private def post() = {
+    if (!entity.getEvents().isEmpty()) {
+      logTrace("Sending %d events (last = %s)".format(entity.getEvents().size(),
+        entity.getEvents().get(entity.getEvents().size() - 1).getEventType()))
+    }
+    val response = client.putEntities(entity)
+    if (response.getErrors() != null && !response.getErrors().isEmpty()) {
+      for (e <- response.getErrors()) {
+        logWarning("Error sending event to timeline server: %s, %s, %d".format(
+          e.getEntityId(), e.getEntityType(), e.getErrorCode()))
+      }
+      false
+    } else {
+      true
     }
   }
 
