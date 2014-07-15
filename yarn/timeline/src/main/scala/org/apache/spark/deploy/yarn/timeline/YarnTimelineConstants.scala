@@ -15,8 +15,8 @@
  * limitations under the License.
  */
 
-package org.apache.spark.deploy.yarn.history
+package org.apache.spark.deploy.yarn.timeline
 
-private object YarnHistoryConstants {
+private object YarnTimelineConstants {
   val ENTITY_TYPE = "SparkApplication"
 }

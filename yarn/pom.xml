@@ -86,9 +86,9 @@
     </profile>
 
     <profile>
-      <id>yarn-history</id>
+      <id>yarn-timeline</id>
       <modules>
-        <module>history</module>
+        <module>timeline</module>
       </modules>
     </profile>
   </profiles>

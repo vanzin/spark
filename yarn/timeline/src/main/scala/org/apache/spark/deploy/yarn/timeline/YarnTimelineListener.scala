@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.deploy.yarn.history
+package org.apache.spark.deploy.yarn.timeline
 
 import java.util.{ArrayList, HashMap, LinkedList}
 import java.util.concurrent.{BlockingQueue, LinkedBlockingQueue}
@@ -36,11 +36,11 @@ import org.apache.spark.util.{JsonProtocol, Utils}
 /**
  * A SparkListener that publishes events to a Yarn Application Timeline Server.
  */
-class YarnHistoryListener(private val sc: SparkContext, private val app: ApplicationReport)
+class YarnTimelineListener(private val sc: SparkContext, private val app: ApplicationReport)
   extends SparkListener with Logging {
 
   private val entity = new TimelineEntity()
-  entity.setEntityType(YarnHistoryConstants.ENTITY_TYPE)
+  entity.setEntityType(YarnTimelineConstants.ENTITY_TYPE)
   entity.setEntityId(app.getApplicationId().toString())
   entity.setStartTime(app.getStartTime())
   entity.addPrimaryFilter("appName", sc.appName)
@@ -50,8 +50,8 @@ class YarnHistoryListener(private val sc: SparkContext, private val app: Applica
   entity.addOtherInfo("startTime", app.getStartTime())
 
   private val eventQueue = new LinkedBlockingQueue[TimelineEvent]()
-  private val worker = new YarnHistoryWorker(sc.hadoopConfiguration, entity, eventQueue)
-  private val workerThread = new Thread(worker, "YarnHistoryWorkerThread")
+  private val worker = new YarnTimelineWorker(sc.hadoopConfiguration, entity, eventQueue)
+  private val workerThread = new Thread(worker, "YarnTimelineWorkerThread")
   workerThread.start()
 
   override def onStageSubmitted(event: SparkListenerStageSubmitted) = {
@@ -179,7 +179,7 @@ class YarnHistoryListener(private val sc: SparkContext, private val app: Applica
  * to reject them, since currently there is no way to identify offending events (other than sending
  * events one at a time).
  */
-private class YarnHistoryWorker(
+private class YarnTimelineWorker(
     private val conf: Configuration,
     private val entity: TimelineEntity,
     private val eventQueue: BlockingQueue[TimelineEvent])

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-package org.apache.spark.deploy.yarn.history
+package org.apache.spark.deploy.yarn.timeline
 
 import java.io.FileNotFoundException
 import java.net.URI
@@ -39,18 +39,18 @@ import org.apache.spark.ui.SparkUI
 import org.apache.spark.util.JsonProtocol
 
 /**
- * Provider that fetches Spark history data from a running Yarn Application History Server.
+ * Provider that fetches Spark history data from a running Yarn Application Timeline Server.
  *
  * Note that, currently, there is no client API for reading from the AHS, so this class uses
  * a JAX-RS client directly. It borrows some code from Yarn for the client setup.
  */
-private class YarnHistoryProvider(conf: SparkConf) extends ApplicationHistoryProvider
+private class YarnTimelineProvider(conf: SparkConf) extends ApplicationTimelineProvider
   with Logging {
 
   private val yarnConf = new YarnConfiguration()
 
   // Copied from Yarn's TimelineClientImpl.java.
-  private val RESOURCE_URI_STR = s"/ws/v1/timeline/${YarnHistoryConstants.ENTITY_TYPE}"
+  private val RESOURCE_URI_STR = s"/ws/v1/timeline/${YarnTimelineConstants.ENTITY_TYPE}"
 
   if (!yarnConf.getBoolean(YarnConfiguration.TIMELINE_SERVICE_ENABLED,
       YarnConfiguration.DEFAULT_TIMELINE_SERVICE_ENABLED)) {
@@ -79,7 +79,7 @@ private class YarnHistoryProvider(conf: SparkConf) extends ApplicationHistoryPro
 
   logInfo(s"Using Yarn history server at $timelineUri")
 
-  override def getListing(): Seq[ApplicationHistoryInfo] = {
+  override def getListing(): Seq[ApplicationTimelineInfo] = {
     val resource = client.resource(timelineUri)
     val entities = resource
       .queryParam("primaryFilter", "status:finished")
@@ -89,7 +89,7 @@ private class YarnHistoryProvider(conf: SparkConf) extends ApplicationHistoryPro
       .getEntity(classOf[TimelineEntities])
 
     entities.getEntities().map(e =>
-      ApplicationHistoryInfo(e.getEntityId(),
+      ApplicationTimelineInfo(e.getEntityId(),
         e.getOtherInfo().get("appName").asInstanceOf[String],
         e.getOtherInfo().get("startTime").asInstanceOf[Number].longValue,
         e.getOtherInfo().get("endTime").asInstanceOf[Number].longValue,
@@ -131,7 +131,7 @@ private class YarnHistoryProvider(conf: SparkConf) extends ApplicationHistoryPro
   }
 
   override def getConfig(): Map[String, String] =
-    Map(("Yarn Application History Server" -> timelineUri.resolve("/").toString()))
+    Map(("Yarn Application Timeline Server" -> timelineUri.resolve("/").toString()))
 
   override def stop(): Unit = client.destroy()
 
