@@ -25,9 +25,13 @@
   </parent>
 
   <groupId>org.apache.spark</groupId>
-  <artifactId>spark-yarn-history_2.10</artifactId>
+  <artifactId>spark-yarn-timeline_2.10</artifactId>
   <packaging>jar</packaging>
   <name>Spark Project YARN Application History API Integration</name>
+
+  <properties>
+     <sbt.project.name>yarn-timeline</sbt.project.name>
+  </properties>
 
   <dependencies>
     <dependency>

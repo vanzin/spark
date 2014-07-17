@@ -40,6 +40,7 @@
     <deb.install.path>/usr/share/spark</deb.install.path>
     <deb.user>root</deb.user>
     <deb.bin.filemode>744</deb.bin.filemode>
+    <jackson.legacy.version>1.9.11</jackson.legacy.version>
   </properties>
 
   <dependencies>
@@ -83,6 +84,31 @@
       <groupId>org.apache.spark</groupId>
       <artifactId>spark-sql_${scala.binary.version}</artifactId>
       <version>${project.version}</version>
+    </dependency>
+    <!--
+      parquet-hadoop pulls in jackson 1.9.11, which is newer than the 1.8.8 version pulled
+      by Hadoop libraries. Without these dependencies, the final assembly ends up containing
+      mixed versions of these jars, and things may break. So standardize on the newer version.
+    -->
+    <dependency>
+      <groupId>org.codehaus.jackson</groupId>
+      <artifactId>jackson-core-asl</artifactId>
+      <version>${jackson.legacy.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.jackson</groupId>
+      <artifactId>jackson-mapper-asl</artifactId>
+      <version>${jackson.legacy.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.jackson</groupId>
+      <artifactId>jackson-xc</artifactId>
+      <version>${jackson.legacy.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.codehaus.jackson</groupId>
+      <artifactId>jackson-jaxrs</artifactId>
+      <version>${jackson.legacy.version}</version>
     </dependency>
   </dependencies>
 
@@ -169,6 +195,16 @@
         <dependency>
           <groupId>org.apache.spark</groupId>
           <artifactId>spark-yarn_${scala.binary.version}</artifactId>
+          <version>${project.version}</version>
+        </dependency>
+      </dependencies>
+    </profile>
+    <profile>
+      <id>yarn-timeline</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.apache.spark</groupId>
+          <artifactId>spark-yarn-timeline_${scala.binary.version}</artifactId>
           <version>${project.version}</version>
         </dependency>
       </dependencies>
