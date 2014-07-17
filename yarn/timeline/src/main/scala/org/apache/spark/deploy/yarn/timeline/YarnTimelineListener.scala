@@ -29,7 +29,7 @@ import org.apache.hadoop.yarn.api.records.timeline.{TimelineEntity, TimelineEven
 import org.apache.hadoop.yarn.client.api.TimelineClient
 import org.json4s.JsonAST._
 
-import org.apache.spark.{Logging, SparkContext}
+import org.apache.spark.{Logging, SparkConf, SparkContext}
 import org.apache.spark.scheduler._
 import org.apache.spark.util.{JsonProtocol, Utils}
 
@@ -49,8 +49,9 @@ class YarnTimelineListener(private val sc: SparkContext, private val app: Applic
   entity.addOtherInfo("sparkUser", sc.sparkUser)
   entity.addOtherInfo("startTime", app.getStartTime())
 
-  private val eventQueue = new LinkedBlockingQueue[TimelineEvent]()
-  private val worker = new YarnTimelineWorker(sc.hadoopConfiguration, entity, eventQueue)
+  private val eventQueue = new LinkedBlockingQueue[TimelineEvent](
+    sc.getConf.getInt("spark.yarn.history.max_event_queue", 1024))
+  private val worker = new YarnTimelineWorker(sc.getConf, sc.hadoopConfiguration, entity, eventQueue)
   private val workerThread = new Thread(worker, "YarnTimelineWorkerThread")
   workerThread.start()
 
@@ -126,7 +127,7 @@ class YarnTimelineListener(private val sc: SparkContext, private val app: Applic
 
     if (workerThread != null) {
       logDebug("Waiting for ATS client to finish...")
-      eventQueue.offer(worker.poison)
+      enqueue(worker.poison)
       workerThread.join()
     }
   }
@@ -141,7 +142,18 @@ class YarnTimelineListener(private val sc: SparkContext, private val app: Applic
     tevent.setTimestamp(timestamp)
     tevent.setEventType(Utils.getFormattedClassName(event))
     tevent.setEventInfo(properties)
-    eventQueue.offer(tevent)
+    enqueue(tevent)
+  }
+
+  private def enqueue(event: TimelineEvent) = {
+    if (!eventQueue.offer(event)) {
+      // Drop the first event in the queue to make room.
+      val dropped = eventQueue.poll()
+      if (dropped != null) {
+        logWarning("Dropping timeline ${event.getEventType()} from queue (max size reached).")
+      }
+      eventQueue.offer(event)
+    }
   }
 
   private def toJavaObject(v: JValue): Object = v match {
@@ -180,13 +192,14 @@ class YarnTimelineListener(private val sc: SparkContext, private val app: Applic
  * events one at a time).
  */
 private class YarnTimelineWorker(
+    private val sparkConf: SparkConf,
     private val conf: Configuration,
     private val entity: TimelineEntity,
     private val eventQueue: BlockingQueue[TimelineEvent])
     extends Runnable with Logging {
 
   val poison = new TimelineEvent()
-  val maxEvents = 64
+  val batchSize = sparkConf.getInt("spark.yarn.history.event_batch_size", 64)
   val client = TimelineClient.createTimelineClient()
 
   override def run() = {
@@ -199,9 +212,10 @@ private class YarnTimelineWorker(
 
       var shutdown = false
       while (!shutdown) {
-        if (events.size() < maxEvents) {
+        if (events.size() < batchSize) {
+          // Do a lone 'take' so that we block in case there are no events.
           events.add(eventQueue.take())
-          eventQueue.drainTo(events, maxEvents - events.size())
+          eventQueue.drainTo(events, batchSize - events.size())
         }
         if (events.peekLast() == poison) {
           shutdown = true

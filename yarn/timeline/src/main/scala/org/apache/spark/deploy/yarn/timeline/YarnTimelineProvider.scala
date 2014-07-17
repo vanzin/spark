@@ -44,7 +44,7 @@ import org.apache.spark.util.JsonProtocol
  * Note that, currently, there is no client API for reading from the AHS, so this class uses
  * a JAX-RS client directly. It borrows some code from Yarn for the client setup.
  */
-private class YarnTimelineProvider(conf: SparkConf) extends ApplicationTimelineProvider
+private class YarnTimelineProvider(conf: SparkConf) extends ApplicationHistoryProvider
   with Logging {
 
   private val yarnConf = new YarnConfiguration()
@@ -79,7 +79,7 @@ private class YarnTimelineProvider(conf: SparkConf) extends ApplicationTimelineP
 
   logInfo(s"Using Yarn history server at $timelineUri")
 
-  override def getListing(): Seq[ApplicationTimelineInfo] = {
+  override def getListing(): Seq[ApplicationHistoryInfo] = {
     val resource = client.resource(timelineUri)
     val entities = resource
       .queryParam("primaryFilter", "status:finished")
@@ -89,7 +89,7 @@ private class YarnTimelineProvider(conf: SparkConf) extends ApplicationTimelineP
       .getEntity(classOf[TimelineEntities])
 
     entities.getEntities().map(e =>
-      ApplicationTimelineInfo(e.getEntityId(),
+      ApplicationHistoryInfo(e.getEntityId(),
         e.getOtherInfo().get("appName").asInstanceOf[String],
         e.getOtherInfo().get("startTime").asInstanceOf[Number].longValue,
         e.getOtherInfo().get("endTime").asInstanceOf[Number].longValue,
