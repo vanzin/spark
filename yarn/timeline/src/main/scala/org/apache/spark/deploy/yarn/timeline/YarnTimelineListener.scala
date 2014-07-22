@@ -24,7 +24,7 @@ import scala.collection.JavaConversions._
 import scala.collection.mutable.ListBuffer
 
 import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.yarn.api.records.ApplicationReport
+import org.apache.hadoop.yarn.api.records.ApplicationId
 import org.apache.hadoop.yarn.api.records.timeline.{TimelineEntity, TimelineEvent}
 import org.apache.hadoop.yarn.client.api.TimelineClient
 import org.json4s.JsonAST._
@@ -36,18 +36,18 @@ import org.apache.spark.util.{JsonProtocol, Utils}
 /**
  * A SparkListener that publishes events to a Yarn Application Timeline Server.
  */
-class YarnTimelineListener(private val sc: SparkContext, private val app: ApplicationReport)
-  extends SparkListener with Logging {
+class YarnTimelineListener(private val sc: SparkContext, private val appId: ApplicationId,
+  private val startTime: Long) extends SparkListener with Logging {
 
   private val entity = new TimelineEntity()
   entity.setEntityType(YarnTimelineConstants.ENTITY_TYPE)
-  entity.setEntityId(app.getApplicationId().toString())
-  entity.setStartTime(app.getStartTime())
+  entity.setEntityId(appId.toString())
+  entity.setStartTime(startTime)
   entity.addPrimaryFilter("appName", sc.appName)
   entity.addPrimaryFilter("sparkUser", sc.sparkUser)
   entity.addOtherInfo("appName", sc.appName)
   entity.addOtherInfo("sparkUser", sc.sparkUser)
-  entity.addOtherInfo("startTime", app.getStartTime())
+  entity.addOtherInfo("startTime", startTime)
 
   private val eventQueue = new LinkedBlockingQueue[TimelineEvent](
     sc.getConf.getInt("spark.yarn.history.max_event_queue", 1024))

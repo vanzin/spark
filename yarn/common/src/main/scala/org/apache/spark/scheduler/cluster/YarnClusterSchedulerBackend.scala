@@ -18,7 +18,7 @@
 package org.apache.spark.scheduler.cluster
 
 import org.apache.spark.SparkContext
-import org.apache.spark.deploy.yarn.ApplicationMasterArguments
+import org.apache.spark.deploy.yarn.{ApplicationMaster, ApplicationMasterArguments}
 import org.apache.spark.scheduler.TaskSchedulerImpl
 import org.apache.spark.util.IntParam
 
@@ -28,13 +28,17 @@ private[spark] class YarnClusterSchedulerBackend(
   extends CoarseGrainedSchedulerBackend(scheduler, sc.env.actorSystem) {
 
   var totalExpectedExecutors = 0
-  
+
   if (conf.getOption("spark.scheduler.minRegisteredResourcesRatio").isEmpty) {
     minRegisteredRatio = 0.8
   }
 
   override def start() {
+    val startTime = System.currentTimeMillis()
     super.start()
+    YarnSchedulerUtils.addTimelineListener(sc,
+      ApplicationMaster.getApplicationAttemptId().getApplicationId(), startTime)
+
     totalExpectedExecutors = ApplicationMasterArguments.DEFAULT_NUMBER_EXECUTORS
     if (System.getenv("SPARK_EXECUTOR_INSTANCES") != null) {
       totalExpectedExecutors = IntParam.unapply(System.getenv("SPARK_EXECUTOR_INSTANCES"))

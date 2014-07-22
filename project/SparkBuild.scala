@@ -87,10 +87,6 @@ object SparkBuild extends PomBuild {
         profiles ++= Seq("yarn")
       }
     }
-    if (Properties.envOrNone("SPARK_YARN_TIMELINE").isDefined) {
-      println("NOTE: SPARK_YARN_HISTORY is deprecated, please use -Pyarn-timelineflag.")
-      profiles ++= Seq("yarn-timeline")
-    }
     profiles
   }
 
