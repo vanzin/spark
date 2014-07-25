@@ -27,6 +27,8 @@ private[spark] class YarnClusterSchedulerBackend(
     sc: SparkContext)
   extends CoarseGrainedSchedulerBackend(scheduler, sc.env.actorSystem) {
 
+  private var timelineClient = YarnTimelineClient(sc)
+
   var totalExpectedExecutors = 0
 
   if (conf.getOption("spark.scheduler.minRegisteredResourcesRatio").isEmpty) {
@@ -34,10 +36,10 @@ private[spark] class YarnClusterSchedulerBackend(
   }
 
   override def start() {
-    val startTime = System.currentTimeMillis()
     super.start()
-    YarnSchedulerUtils.addTimelineListener(sc,
-      ApplicationMaster.getApplicationAttemptId().getApplicationId(), startTime)
+    timelineClient.foreach {
+      _.start(sc, ApplicationMaster.getApplicationAttemptId().getApplicationId())
+    }
 
     totalExpectedExecutors = ApplicationMasterArguments.DEFAULT_NUMBER_EXECUTORS
     if (System.getenv("SPARK_EXECUTOR_INSTANCES") != null) {
@@ -51,4 +53,7 @@ private[spark] class YarnClusterSchedulerBackend(
   override def sufficientResourcesRegistered(): Boolean = {
     totalRegisteredExecutors.get() >= totalExpectedExecutors * minRegisteredRatio
   }
+
+  override def stop() = timelineClient.foreach { _.stop() }
+
 }

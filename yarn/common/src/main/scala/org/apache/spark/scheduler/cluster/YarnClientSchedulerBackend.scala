@@ -40,6 +40,8 @@ private[spark] class YarnClientSchedulerBackend(
   var stopping: Boolean = false
   var totalExpectedExecutors = 0
 
+  private val timelineClient = YarnTimelineClient(sc)
+
   private[spark] def addArg(optionName: String, envVar: String, sysProp: String,
       arrayBuf: ArrayBuffer[String]) {
     if (System.getenv(envVar) != null) {
@@ -107,7 +109,7 @@ private[spark] class YarnClientSchedulerBackend(
       // Ready to go, or already gone.
       val state = report.getYarnApplicationState()
       if (state == YarnApplicationState.RUNNING) {
-        YarnSchedulerUtils.addTimelineListener(sc, report.getApplicationId(), report.getStartTime())
+        timelineClient.foreach { _.start(sc, report.getApplicationId()) }
         return
       } else if (state == YarnApplicationState.FINISHED ||
         state == YarnApplicationState.FAILED ||
@@ -148,6 +150,7 @@ private[spark] class YarnClientSchedulerBackend(
     stopping = true
     super.stop()
     client.stop
+    timelineClient.foreach { _.stop() }
     logInfo("Stopped")
   }
 
