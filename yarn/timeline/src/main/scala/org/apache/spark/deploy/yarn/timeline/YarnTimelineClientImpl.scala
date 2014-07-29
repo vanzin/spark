@@ -47,7 +47,7 @@ private[spark] class YarnTimelineClientImpl extends SparkListener with YarnTimel
   with Logging {
 
   private var conf: SparkConf = null
-  private val client = TimelineClient.createTimelineClient()
+  private var client: TimelineClient = null
 
   // These variables are used to control which event file is currently being written to.
   private var batchSize = -1
@@ -77,11 +77,15 @@ private[spark] class YarnTimelineClientImpl extends SparkListener with YarnTimel
     this.conf = sc.getConf
     this.logDir = Utils.createTempDir()
     this.batchSize = conf.getInt("spark.yarn.timeline.batchSize", 64)
+    if (batchSize <= 0) {
+      throw new IllegalArgumentException(s"Invalid batch size: $batchSize")
+    }
 
     entity = new TimelineEntity()
-    entity.setEntityType(YarnTimelineConstants.ENTITY_TYPE)
+    entity.setEntityType(YarnTimelineUtils.ENTITY_TYPE)
     entity.setEntityId(appId.toString())
 
+    client = creteTimelineClient()
     client.init(yarnConf)
     client.start()
 
@@ -99,12 +103,14 @@ private[spark] class YarnTimelineClientImpl extends SparkListener with YarnTimel
   override def stop(): Unit = {
     if (out != null) {
       out.close()
+      nextAvailable += 1
     }
     lock.synchronized {
       done = true
       lock.notifyAll()
     }
     uploadThread.join()
+    client.stop()
     logInfo("Yarn timeline client finished.")
   }
 
@@ -179,8 +185,7 @@ private[spark] class YarnTimelineClientImpl extends SparkListener with YarnTimel
     newEntity.addPrimaryFilter("sparkUser", event.sparkUser)
     newEntity.addOtherInfo("appName", event.appName)
     newEntity.addOtherInfo("sparkUser", event.sparkUser)
-    newEntity.addOtherInfo("startTime", event.time)
-    this.entity = new TimelineEntity()
+    this.entity = newEntity
 
     recordEvent(event, event.time)
   }
@@ -200,8 +205,9 @@ private[spark] class YarnTimelineClientImpl extends SparkListener with YarnTimel
     }
 
     try {
+      val obj = JsonProtocol.sparkEventToJson(event).asInstanceOf[JObject]
       out.writeObject(new EventEntry(timestamp, Utils.getFormattedClassName(event),
-        toJavaMap(JsonProtocol.sparkEventToJson(event).asInstanceOf[JObject].obj)))
+        YarnTimelineUtils.toJavaMap(obj)))
       currentCount += 1
       if (currentCount == batchSize) {
         out.close()
@@ -233,15 +239,22 @@ private[spark] class YarnTimelineClientImpl extends SparkListener with YarnTimel
       false
     }
 
+    // While the client is active, do the following:
+    // - if there are pending batches try to upload them
+    // - if an upload fails, set a maximum wait time so we retry soon-ish
+    // - if there are no batches to upload, then wait indefinitely until notified by the listener
     while (!done) {
-      lock.synchronized {
-        while (!done && currentUploadIndex == nextAvailable) {
-          lock.wait()
-        }
+      var uploadFailed = false
+      while (!done && !uploadFailed && currentUploadIndex < nextAvailable) {
+        uploadFailed = !upload(false)
       }
 
-      while (!done && currentUploadIndex < nextAvailable) {
-        upload(false)
+      lock.synchronized {
+        if (uploadFailed) {
+          lock.wait(retryWait)
+        } else while (!done && currentUploadIndex == nextAvailable) {
+          lock.wait()
+        }
       }
     }
 
@@ -263,7 +276,7 @@ private[spark] class YarnTimelineClientImpl extends SparkListener with YarnTimel
    */
   private def uploadNextBatch() = {
     val eventLog = new ObjectInputStream(new FileInputStream(
-      new File(logDir, "event." + currentUploadIndex)))
+      new File(logDir, "event." + (currentUploadIndex + 1))))
     var eof = false
 
     val events = new JArrayList[TimelineEvent](batchSize)
@@ -287,60 +300,45 @@ private[spark] class YarnTimelineClientImpl extends SparkListener with YarnTimel
       Utils.logUncaughtExceptions(eventLog.close())
     }
 
-    val localEntity = entity
+    val localEntity = copyEntity()
     localEntity.setEvents(events)
 
-    val response = client.putEntities(localEntity)
-    if (response.getErrors() != null && !response.getErrors().isEmpty()) {
-      for (e <- response.getErrors()) {
-        logWarning("Error sending event to timeline server: %s, %s, %d".format(
-          e.getEntityId(), e.getEntityType(), e.getErrorCode()))
+    try {
+      val response = client.putEntities(localEntity)
+      if (response.getErrors() != null && !response.getErrors().isEmpty()) {
+        for (e <- response.getErrors()) {
+          logWarning("Error sending event to timeline server: %s, %s, %d".format(
+            e.getEntityId(), e.getEntityType(), e.getErrorCode()))
+        }
+        false
+      } else {
+        true
       }
-      false
-    } else {
-      true
+    } catch {
+      case e: Exception =>
+        logWarning("Error uploading events to ATS.", e)
+        false
     }
   }
 
-  private def toJavaObject(v: JValue): Object = v match {
-    case JNothing => null
-    case JNull => null
-    case JString(s) => s
-    case JDouble(num) => java.lang.Double.valueOf(num)
-    case JDecimal(num) => num.bigDecimal
-    case JInt(num) => java.lang.Long.valueOf(num.longValue)
-    case JBool(value) => java.lang.Boolean.valueOf(value)
-    case JObject(fields) => toJavaMap(fields)
-    case JArray(vals) => {
-      val list = new java.util.ArrayList[Object]()
-      vals.foreach(x => list.add(toJavaObject(x)))
-      list
-    }
-  }
-
-  /**
-   * Converts a json4s list of fields into a Java Map suitable for serialization by Jackson,
-   * which is used by the ATS client library.
-   */
-  private def toJavaMap(fields: List[(String, JValue)]) = {
-    val map = new JHashMap[String, Object]()
-    fields.foreach(f => map.put(f._1, toJavaObject(f._2)))
-    map
-  }
 
   private def copyEntity() = {
     val newEntity = new TimelineEntity()
-    newEntity.setEntityType(entity.getEntityType())
-    newEntity.setEntityId(entity.getEntityId())
-    newEntity.setStartTime(entity.getStartTime())
-    newEntity.setRelatedEntities(copyMap(entity.getRelatedEntities()))
-    newEntity.setPrimaryFilters(copyMap(entity.getPrimaryFilters()))
-    newEntity.setOtherInfo(copyMap(entity.getOtherInfo()))
+    val oldEntity = entity
+    newEntity.setEntityType(oldEntity.getEntityType())
+    newEntity.setEntityId(oldEntity.getEntityId())
+    newEntity.setStartTime(oldEntity.getStartTime())
+    newEntity.setRelatedEntities(copyMap(oldEntity.getRelatedEntities()))
+    newEntity.setPrimaryFilters(copyMap(oldEntity.getPrimaryFilters()))
+    newEntity.setOtherInfo(copyMap(oldEntity.getOtherInfo()))
     newEntity
   }
 
   private def copyMap[K: ClassTag, V: ClassTag](map: JMap[K, V]): JMap[K, V] =
     if (map != null) new JHashMap(map) else null
+
+
+  private[timeline] def creteTimelineClient() = TimelineClient.createTimelineClient()
 
 }
 

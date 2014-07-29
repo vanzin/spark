@@ -50,7 +50,7 @@ private class YarnTimelineProvider(conf: SparkConf) extends ApplicationHistoryPr
   private val yarnConf = new YarnConfiguration()
 
   // Copied from Yarn's TimelineClientImpl.java.
-  private val RESOURCE_URI_STR = s"/ws/v1/timeline/${YarnTimelineConstants.ENTITY_TYPE}"
+  private val RESOURCE_URI_STR = s"/ws/v1/timeline/${YarnTimelineUtils.ENTITY_TYPE}"
 
   if (!yarnConf.getBoolean(YarnConfiguration.TIMELINE_SERVICE_ENABLED,
       YarnConfiguration.DEFAULT_TIMELINE_SERVICE_ENABLED)) {
@@ -119,7 +119,7 @@ private class YarnTimelineProvider(conf: SparkConf) extends ApplicationHistoryPr
 
     events.getAllEvents().foreach { entityEvents =>
       entityEvents.getEvents().reverse.foreach { e =>
-        val sparkEvent = toJValue(e.getEventInfo())
+        val sparkEvent = YarnTimelineUtils.toJValue(e.getEventInfo())
         bus.postToAll(JsonProtocol.sparkEventFromJson(sparkEvent))
       }
     }
@@ -134,20 +134,5 @@ private class YarnTimelineProvider(conf: SparkConf) extends ApplicationHistoryPr
     Map(("Yarn Application Timeline Server" -> timelineUri.resolve("/").toString()))
 
   override def stop(): Unit = client.destroy()
-
-  private def toJValue(obj: Object): JValue = obj match {
-    case str: String => JString(str)
-    case dbl: java.lang.Double => JDouble(dbl)
-    case dec: java.math.BigDecimal => JDecimal(dec)
-    case int: java.lang.Integer => JInt(BigInt(int))
-    case long: java.lang.Long => JInt(BigInt(long))
-    case bool: java.lang.Boolean => JBool(bool)
-    case map: JMap[_, _] =>
-      val jmap = map.asInstanceOf[JMap[String, Object]]
-      JObject(jmap.entrySet().map { e => (e.getKey() -> toJValue(e.getValue())) }.toList)
-    case array: JCollection[_] =>
-      JArray(array.asInstanceOf[JCollection[Object]].map(o => toJValue(o)).toList)
-    case null => JNothing
-  }
 
 }
