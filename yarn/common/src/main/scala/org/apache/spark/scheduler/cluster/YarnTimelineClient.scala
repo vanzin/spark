@@ -20,9 +20,6 @@ package org.apache.spark.scheduler.cluster
 import org.apache.hadoop.yarn.api.records.ApplicationId
 
 import org.apache.spark.{Logging, SparkContext}
-import org.apache.spark.deploy.yarn.{ApplicationMaster, ApplicationMasterArguments}
-import org.apache.spark.scheduler.TaskSchedulerImpl
-import org.apache.spark.util.IntParam
 
 private[spark] trait YarnTimelineClient {
 
@@ -48,7 +45,7 @@ private[spark] object YarnTimelineClient extends Logging {
           None
       }
     } else {
-      logInfo("Yarn timeline client disabled or unavailable.")
+      logDebug("Yarn timeline client disabled or unavailable.")
       None
     }
   }

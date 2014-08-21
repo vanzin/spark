@@ -86,6 +86,7 @@
     </profile>
 
     <profile>
+      <!-- yarn-timeline requires Hadoop 2.5.0 to compile. -->
       <id>yarn-timeline</id>
       <modules>
         <module>timeline</module>

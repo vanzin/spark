@@ -88,14 +88,20 @@ private class YarnTimelineProvider(conf: SparkConf) extends ApplicationHistoryPr
       .get(classOf[ClientResponse])
       .getEntity(classOf[TimelineEntities])
 
-    entities.getEntities().map(e =>
-      ApplicationHistoryInfo(e.getEntityId(),
-        e.getOtherInfo().get("appName").asInstanceOf[String],
-        e.getOtherInfo().get("startTime").asInstanceOf[Number].longValue,
-        e.getOtherInfo().get("endTime").asInstanceOf[Number].longValue,
-        e.getOtherInfo().get("endTime").asInstanceOf[Number].longValue,
-        e.getOtherInfo().get("sparkUser").asInstanceOf[String])
-    )
+    entities.getEntities().flatMap { e =>
+      try {
+        Some(ApplicationHistoryInfo(e.getEntityId(),
+          e.getOtherInfo().get("appName").asInstanceOf[String],
+          e.getStartTime(),
+          e.getOtherInfo().get("endTime").asInstanceOf[Number].longValue,
+          e.getOtherInfo().get("endTime").asInstanceOf[Number].longValue,
+          e.getOtherInfo().get("sparkUser").asInstanceOf[String]))
+      } catch {
+        case e: Exception =>
+          logInfo("Failed to parse event.", e)
+          None
+      }
+    }
   }
 
   override def getAppUI(appId: String): SparkUI = {
@@ -104,9 +110,7 @@ private class YarnTimelineProvider(conf: SparkConf) extends ApplicationHistoryPr
       .queryParam("entityId", appId)
       .accept(MediaType.APPLICATION_JSON)
 
-    val events = resource.get(classOf[ClientResponse])
-      .getEntity(classOf[TimelineEvents])
-
+    val events = resource.get(classOf[ClientResponse]).getEntity(classOf[TimelineEvents])
     val bus = new SparkListenerBus() { }
     val appListener = new ApplicationEventListener()
     bus.addListener(appListener)
@@ -125,7 +129,8 @@ private class YarnTimelineProvider(conf: SparkConf) extends ApplicationHistoryPr
     }
 
     val uiAclsEnabled = conf.getBoolean("spark.history.ui.acls.enable", false)
-    ui.getSecurityManager.setUIAcls(uiAclsEnabled)
+    ui.getSecurityManager.setAcls(uiAclsEnabled)
+    ui.getSecurityManager.setAdminAcls(appListener.adminAcls)
     ui.getSecurityManager.setViewAcls(appListener.sparkUser, appListener.viewAcls)
     ui
   }

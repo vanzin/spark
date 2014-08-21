@@ -192,6 +192,7 @@ private[spark] class YarnTimelineClientImpl extends SparkListener with YarnTimel
 
   override def onApplicationEnd(event: SparkListenerApplicationEnd) = {
     val newEntity = copyEntity()
+    newEntity.addPrimaryFilter("status", "finished")
     newEntity.addOtherInfo("endTime", java.lang.Long.valueOf(event.time))
     this.entity = newEntity
     recordEvent(event, event.time)
