@@ -154,7 +154,7 @@ class OutputCommitCoordinatorSuite extends SparkFunSuite with BeforeAndAfter {
   test("Job should not complete if all commits are denied") {
     // Create a mock OutputCommitCoordinator that denies all attempts to commit
     doReturn(false).when(outputCommitCoordinator).handleAskPermissionToCommit(
-      Matchers.any(), Matchers.any(), Matchers.any(), Matchers.any())
+      Matchers.any(), Matchers.any(), Matchers.any())
     val rdd: RDD[Int] = sc.parallelize(Seq(1), 1)
     def resultHandler(x: Int, y: Unit): Unit = {}
     val futureAction: SimpleFutureAction[Unit] = sc.submitJob[Int, Unit, Unit](rdd,
@@ -170,73 +170,65 @@ class OutputCommitCoordinatorSuite extends SparkFunSuite with BeforeAndAfter {
 
   test("Only authorized committer failures can clear the authorized committer lock (SPARK-6614)") {
     val stage: Int = 1
-    val stageAttempt: Int = 1
     val partition: Int = 2
-    val authorizedCommitter: Int = 3
-    val nonAuthorizedCommitter: Int = 100
+    val authorizedCommitter: Long = 3
+    val nonAuthorizedCommitter: Long = 100
     outputCommitCoordinator.stageStart(stage, maxPartitionId = 2)
 
-    assert(outputCommitCoordinator.canCommit(stage, stageAttempt, partition, authorizedCommitter))
-    assert(!outputCommitCoordinator.canCommit(stage, stageAttempt, partition,
-      nonAuthorizedCommitter))
+    assert(outputCommitCoordinator.canCommit(stage, partition, authorizedCommitter))
+    assert(!outputCommitCoordinator.canCommit(stage, partition, nonAuthorizedCommitter))
     // The non-authorized committer fails
-    outputCommitCoordinator.taskCompleted(stage, stageAttempt, partition,
-      attemptNumber = nonAuthorizedCommitter, reason = TaskKilled("test"))
+    outputCommitCoordinator.taskCompleted(stage, partition, nonAuthorizedCommitter,
+      reason = TaskKilled("test"))
     // New tasks should still not be able to commit because the authorized committer has not failed
-    assert(!outputCommitCoordinator.canCommit(stage, stageAttempt, partition,
-      nonAuthorizedCommitter + 1))
+    assert(!outputCommitCoordinator.canCommit(stage, partition, nonAuthorizedCommitter + 1))
     // The authorized committer now fails, clearing the lock
-    outputCommitCoordinator.taskCompleted(stage, stageAttempt, partition,
-      attemptNumber = authorizedCommitter, reason = TaskKilled("test"))
+    outputCommitCoordinator.taskCompleted(stage, partition, authorizedCommitter,
+      reason = TaskKilled("test"))
     // A new task should now be allowed to become the authorized committer
-    assert(outputCommitCoordinator.canCommit(stage, stageAttempt, partition,
-      nonAuthorizedCommitter + 2))
+    assert(outputCommitCoordinator.canCommit(stage, partition, nonAuthorizedCommitter + 2))
     // There can only be one authorized committer
-    assert(!outputCommitCoordinator.canCommit(stage, stageAttempt, partition,
-      nonAuthorizedCommitter + 3))
+    assert(!outputCommitCoordinator.canCommit(stage, partition, nonAuthorizedCommitter + 3))
   }
 
   test("SPARK-19631: Do not allow failed attempts to be authorized for committing") {
     val stage: Int = 1
-    val stageAttempt: Int = 1
     val partition: Int = 1
-    val failedAttempt: Int = 0
+    val failedAttempt: Long = 0L
     outputCommitCoordinator.stageStart(stage, maxPartitionId = 1)
-    outputCommitCoordinator.taskCompleted(stage, stageAttempt, partition,
-      attemptNumber = failedAttempt,
+    outputCommitCoordinator.taskCompleted(stage, partition, failedAttempt,
       reason = ExecutorLostFailure("0", exitCausedByApp = true, None))
-    assert(!outputCommitCoordinator.canCommit(stage, stageAttempt, partition, failedAttempt))
-    assert(outputCommitCoordinator.canCommit(stage, stageAttempt, partition, failedAttempt + 1))
+    assert(!outputCommitCoordinator.canCommit(stage, partition, failedAttempt))
+    assert(outputCommitCoordinator.canCommit(stage, partition, failedAttempt + 1))
   }
 
   test("SPARK-24589: Differentiate tasks from different stage attempts") {
     var stage = 1
-    val taskAttempt = 1
     val partition = 1
 
     outputCommitCoordinator.stageStart(stage, maxPartitionId = 1)
-    assert(outputCommitCoordinator.canCommit(stage, 1, partition, taskAttempt))
-    assert(!outputCommitCoordinator.canCommit(stage, 2, partition, taskAttempt))
+    assert(outputCommitCoordinator.canCommit(stage, partition, 1L))
+    assert(!outputCommitCoordinator.canCommit(stage, partition, 2L))
 
     // Fail the task in the first attempt, the task in the second attempt should succeed.
     stage += 1
     outputCommitCoordinator.stageStart(stage, maxPartitionId = 1)
-    outputCommitCoordinator.taskCompleted(stage, 1, partition, taskAttempt,
+    outputCommitCoordinator.taskCompleted(stage, partition, 1L,
       ExecutorLostFailure("0", exitCausedByApp = true, None))
-    assert(!outputCommitCoordinator.canCommit(stage, 1, partition, taskAttempt))
-    assert(outputCommitCoordinator.canCommit(stage, 2, partition, taskAttempt))
+    assert(!outputCommitCoordinator.canCommit(stage, partition, 1L))
+    assert(outputCommitCoordinator.canCommit(stage, partition, 2L))
 
     // Commit the 1st attempt, fail the 2nd attempt, make sure 3rd attempt cannot commit,
     // then fail the 1st attempt and make sure the 4th one can commit again.
     stage += 1
     outputCommitCoordinator.stageStart(stage, maxPartitionId = 1)
-    assert(outputCommitCoordinator.canCommit(stage, 1, partition, taskAttempt))
-    outputCommitCoordinator.taskCompleted(stage, 2, partition, taskAttempt,
+    assert(outputCommitCoordinator.canCommit(stage, partition, 1L))
+    outputCommitCoordinator.taskCompleted(stage, partition, 2,
       ExecutorLostFailure("0", exitCausedByApp = true, None))
-    assert(!outputCommitCoordinator.canCommit(stage, 3, partition, taskAttempt))
-    outputCommitCoordinator.taskCompleted(stage, 1, partition, taskAttempt,
+    assert(!outputCommitCoordinator.canCommit(stage, partition, 3L))
+    outputCommitCoordinator.taskCompleted(stage, partition, 1L,
       ExecutorLostFailure("0", exitCausedByApp = true, None))
-    assert(outputCommitCoordinator.canCommit(stage, 4, partition, taskAttempt))
+    assert(outputCommitCoordinator.canCommit(stage, partition, 4L))
   }
 
   test("SPARK-24589: Make sure stage state is cleaned up") {

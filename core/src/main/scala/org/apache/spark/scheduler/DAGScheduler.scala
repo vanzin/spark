@@ -1171,9 +1171,8 @@ class DAGScheduler(
 
     outputCommitCoordinator.taskCompleted(
       stageId,
-      task.stageAttemptId,
       task.partitionId,
-      event.taskInfo.attemptNumber, // this is a task attempt number
+      event.taskInfo.taskId,
       event.reason)
 
     if (!stageIdToStage.contains(task.stageId)) {
