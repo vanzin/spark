@@ -1,5 +1,7 @@
 package org.apache.spark.shuffle.external;
 
+import scala.compat.java8.OptionConverters;
+
 import com.google.common.collect.Lists;
 import org.apache.spark.network.TransportContext;
 import org.apache.spark.network.client.TransportClientBootstrap;
