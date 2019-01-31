@@ -83,4 +83,9 @@ public class ExternalShuffleDataIO implements ShuffleDataIO {
             transportConf, context, securityManager.isAuthenticationEnabled(),
             securityManager, hostPort._1, hostPort._2);
     }
+
+    @Override
+    public void shuffleCleaned(int shuffleId) throws Exception {
+      // TODO.
+    }
 }

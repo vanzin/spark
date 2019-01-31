@@ -25,4 +25,6 @@ public interface ShuffleDataIO {
   ShuffleReadSupport readSupport() throws IOException;
 
   ShuffleWriteSupport writeSupport() throws IOException;
+
+  void shuffleCleaned(int shuffleId) throws Exception;
 }
