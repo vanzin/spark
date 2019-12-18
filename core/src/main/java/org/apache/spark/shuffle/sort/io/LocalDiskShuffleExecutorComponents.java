@@ -17,28 +17,38 @@
 
 package org.apache.spark.shuffle.sort.io;
 
+import java.io.InputStream;
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
 
 import com.google.common.annotations.VisibleForTesting;
 
+import org.apache.spark.MapOutputTracker;
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkEnv;
-import org.apache.spark.ShuffleDependency;
+import org.apache.spark.TaskContext;
+import org.apache.spark.serializer.SerializerManager;
+import org.apache.spark.shuffle.BlockStoreShuffleReader;
 import org.apache.spark.shuffle.api.FetchFailedException;
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents;
-import org.apache.spark.shuffle.api.ShuffleIterator;
 import org.apache.spark.shuffle.api.ShuffleMapOutputWriter;
 import org.apache.spark.shuffle.api.ShuffleMetadata;
 import org.apache.spark.shuffle.IndexShuffleBlockResolver;
 import org.apache.spark.shuffle.api.SingleSpillShuffleMapOutputWriter;
 import org.apache.spark.storage.BlockManager;
+import org.apache.spark.storage.ShuffleBlockFetcherIterator;
+import org.apache.spark.util.CompletionIterator;
+
+// Gah.
+import static org.apache.spark.internal.config.package$.MODULE$;
 
 public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorComponents {
 
   private final SparkConf sparkConf;
   private BlockManager blockManager;
+  private SerializerManager serializerManager;
   private IndexShuffleBlockResolver blockResolver;
 
   public LocalDiskShuffleExecutorComponents(SparkConf sparkConf) {
@@ -58,6 +68,7 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
   @Override
   public void initializeExecutor(String appId, String execId, Map<String, String> extraConfigs) {
     blockManager = SparkEnv.get().blockManager();
+    serializerManager = SparkEnv.get().serializerManager();
     if (blockManager == null) {
       throw new IllegalStateException("No blockManager available from the SparkEnv.");
     }
@@ -90,21 +101,45 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
   }
 
   @Override
-  public <K, V, C> ShuffleIterator<K, C> readShuffle(
-      ShuffleDependency<K, V, C> shuffleDep,
+  public Iterator<InputStream> readShuffle(
+      int shuffleId,
       int startPartition,
       int endPartition,
       Optional<ShuffleMetadata> metadata) throws IOException, FetchFailedException {
-    /*
-    TODO:
-    val blocksByAddress = SparkEnv.get.mapOutputTracker.getMapSizesByExecutorId(
-      handle.shuffleId, startPartition, endPartition)
-    new BlockStoreShuffleReader(
-      handle.asInstanceOf[BaseShuffleHandle[K, _, C]], blocksByAddress, context, metrics,
-      shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
-    */
+    // XXX: This is ugly. Perhaps should be in Scala.
 
-    throw new UnsupportedOperationException();
+    LocalDiskShuffleMetadata localMetadata = (LocalDiskShuffleMetadata) metadata.get();
+
+    scala.collection.Iterator<InputStream> blockIter = new ShuffleBlockFetcherIterator(
+      TaskContext.get(),
+      blockManager.blockStoreClient(),
+      blockManager,
+      MapOutputTracker.convertMapStatuses(shuffleId, startPartition, endPartition,
+        localMetadata.statuses, scala.Option.apply(null)),
+      // XXX. this should come from the shuffle dep, but that's not available here.
+      serializerManager::wrapStream,
+      ((long) sparkConf.get(MODULE$.REDUCER_MAX_SIZE_IN_FLIGHT()) * 1024 * 1024),
+      ((int) sparkConf.get(MODULE$.REDUCER_MAX_REQS_IN_FLIGHT())),
+      ((int) sparkConf.get(MODULE$.REDUCER_MAX_BLOCKS_IN_FLIGHT_PER_ADDRESS())),
+      ((long) sparkConf.get(MODULE$.MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM())),
+      ((boolean) sparkConf.get(MODULE$.SHUFFLE_DETECT_CORRUPT())),
+      ((boolean) sparkConf.get(MODULE$.SHUFFLE_DETECT_CORRUPT_MEMORY())),
+      TaskContext.get().taskMetrics().createTempShuffleReadMetrics(),
+      false /* see BlockStoreShuffleReader; need to implement this somehow */);
+
+    return new Iterator<InputStream>() {
+
+      @Override
+      public boolean hasNext() {
+        return blockIter.hasNext();
+      }
+
+      @Override
+      public InputStream next() {
+        return blockIter.next();
+      }
+
+    };
   }
 
 }

@@ -17,6 +17,8 @@
 
 package org.apache.spark.shuffle
 
+import java.io.InputStream
+
 import org.apache.spark._
 import org.apache.spark.internal.{config, Logging}
 import org.apache.spark.io.CompressionCodec
@@ -29,8 +31,8 @@ import org.apache.spark.util.collection.ExternalSorter
  * Fetches and reads the blocks from a shuffle by requesting them from other nodes' block stores.
  */
 private[spark] class BlockStoreShuffleReader[K, C](
-    dep: ShuffleDependency[K, _, C],
-    blocksByAddress: Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])],
+    handle: BaseShuffleHandle[K, _, C],
+    shuffleData: Iterator[InputStream],
     context: TaskContext,
     readMetrics: ShuffleReadMetricsReporter,
     serializerManager: SerializerManager = SparkEnv.get.serializerManager,
@@ -39,6 +41,10 @@ private[spark] class BlockStoreShuffleReader[K, C](
     shouldBatchFetch: Boolean = false)
   extends ShuffleReader[K, C] with Logging {
 
+  private val dep = handle.dependency
+
+  // TODO: this has to be done in the plugin. But it depends on the shuffle dep data which
+  // is not available there (and maybe shouldn't?). So need a solution...
   private def fetchContinuousBlocksInBatch: Boolean = {
     val conf = SparkEnv.get.conf
     val serializerRelocatable = dep.serializer.supportsRelocationOfSerializedObjects
@@ -64,30 +70,14 @@ private[spark] class BlockStoreShuffleReader[K, C](
 
   /** Read the combined key-values for this reduce task */
   override def read(): Iterator[Product2[K, C]] = {
-    val wrappedStreams = new ShuffleBlockFetcherIterator(
-      context,
-      blockManager.blockStoreClient,
-      blockManager,
-      blocksByAddress,
-      serializerManager.wrapStream,
-      // Note: we use getSizeAsMb when no suffix is provided for backwards compatibility
-      SparkEnv.get.conf.get(config.REDUCER_MAX_SIZE_IN_FLIGHT) * 1024 * 1024,
-      SparkEnv.get.conf.get(config.REDUCER_MAX_REQS_IN_FLIGHT),
-      SparkEnv.get.conf.get(config.REDUCER_MAX_BLOCKS_IN_FLIGHT_PER_ADDRESS),
-      SparkEnv.get.conf.get(config.MAX_REMOTE_BLOCK_SIZE_FETCH_TO_MEM),
-      SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT),
-      SparkEnv.get.conf.get(config.SHUFFLE_DETECT_CORRUPT_MEMORY),
-      readMetrics,
-      fetchContinuousBlocksInBatch).toCompletionIterator
-
     val serializerInstance = dep.serializer.newInstance()
 
     // Create a key/value iterator for each stream
-    val recordIter = wrappedStreams.flatMap { case (blockId, wrappedStream) =>
+    val recordIter = shuffleData.flatMap { stream =>
       // Note: the asKeyValueIterator below wraps a key/value iterator inside of a
       // NextIterator. The NextIterator makes sure that close() is called on the
       // underlying InputStream when all records have been read.
-      serializerInstance.deserializeStream(wrappedStream).asKeyValueIterator
+      serializerInstance.deserializeStream(stream).asKeyValueIterator
     }
 
     // Update the context task metrics for each record read.

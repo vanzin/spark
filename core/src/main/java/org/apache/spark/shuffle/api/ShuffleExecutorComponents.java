@@ -17,7 +17,9 @@
 
 package org.apache.spark.shuffle.api;
 
+import java.io.InputStream;
 import java.io.IOException;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.Optional;
 
@@ -76,8 +78,8 @@ public interface ShuffleExecutorComponents {
   }
 
   // Return an iterator for the shuffle data defined by the args.
-  <K, V, C> ShuffleIterator<K, C> readShuffle(
-      ShuffleDependency<K, V, C> shuffleDep,
+  Iterator<InputStream> readShuffle(
+      int shuffleId,
       int startPartition,
       int endPartition,
       Optional<ShuffleMetadata> metadata)

@@ -20,6 +20,7 @@ package org.apache.spark.storage
 import java.io.{InputStream, IOException}
 import java.nio.channels.ClosedByInterruptException
 import java.util.concurrent.{LinkedBlockingQueue, TimeUnit}
+import java.util.function.BiFunction
 import javax.annotation.concurrent.GuardedBy
 
 import scala.collection.mutable
@@ -72,7 +73,7 @@ final class ShuffleBlockFetcherIterator(
     shuffleClient: BlockStoreClient,
     blockManager: BlockManager,
     blocksByAddress: Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])],
-    streamWrapper: (BlockId, InputStream) => InputStream,
+    streamWrapper: BiFunction[BlockId, InputStream, InputStream],
     maxBytesInFlight: Long,
     maxReqsInFlight: Int,
     maxBlocksInFlightPerAddress: Int,
@@ -81,7 +82,7 @@ final class ShuffleBlockFetcherIterator(
     detectCorruptUseExtraMemory: Boolean,
     shuffleMetrics: ShuffleReadMetricsReporter,
     doBatchFetch: Boolean)
-  extends Iterator[(BlockId, InputStream)] with DownloadFileManager with Logging {
+  extends Iterator[InputStream] with DownloadFileManager with Logging {
 
   import ShuffleBlockFetcherIterator._
 
@@ -560,7 +561,7 @@ final class ShuffleBlockFetcherIterator(
    *
    * Throws a FetchFailedException if the next block could not be fetched.
    */
-  override def next(): (BlockId, InputStream) = {
+  override def next(): InputStream = {
     if (!hasNext) {
       throw new NoSuchElementException()
     }
@@ -636,7 +637,7 @@ final class ShuffleBlockFetcherIterator(
               throwFetchFailedException(blockId, mapIndex, address, e)
           }
           try {
-            input = streamWrapper(blockId, in)
+            input = streamWrapper.apply(blockId, in)
             // If the stream is compressed or wrapped, then we optionally decompress/unwrap the
             // first maxBytesInFlight/3 bytes into memory, to check for corruption in that portion
             // of the data. But even if 'detectCorruptUseExtraMemory' configuration is off, or if
@@ -677,18 +678,17 @@ final class ShuffleBlockFetcherIterator(
     }
 
     currentResult = result.asInstanceOf[SuccessFetchResult]
-    (currentResult.blockId,
-      new BufferReleasingInputStream(
-        input,
-        this,
-        currentResult.blockId,
-        currentResult.mapIndex,
-        currentResult.address,
-        detectCorrupt && streamCompressedOrEncrypted))
+    new BufferReleasingInputStream(
+      input,
+      this,
+      currentResult.blockId,
+      currentResult.mapIndex,
+      currentResult.address,
+      detectCorrupt && streamCompressedOrEncrypted)
   }
 
-  def toCompletionIterator: Iterator[(BlockId, InputStream)] = {
-    CompletionIterator[(BlockId, InputStream), this.type](this,
+  def toCompletionIterator: Iterator[InputStream] = {
+    CompletionIterator[InputStream, this.type](this,
       onCompleteCallback.onComplete(context))
   }
 
