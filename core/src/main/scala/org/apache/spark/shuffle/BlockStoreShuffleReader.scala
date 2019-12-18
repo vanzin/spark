@@ -29,7 +29,7 @@ import org.apache.spark.util.collection.ExternalSorter
  * Fetches and reads the blocks from a shuffle by requesting them from other nodes' block stores.
  */
 private[spark] class BlockStoreShuffleReader[K, C](
-    handle: BaseShuffleHandle[K, _, C],
+    dep: ShuffleDependency[K, _, C],
     blocksByAddress: Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])],
     context: TaskContext,
     readMetrics: ShuffleReadMetricsReporter,
@@ -38,8 +38,6 @@ private[spark] class BlockStoreShuffleReader[K, C](
     mapOutputTracker: MapOutputTracker = SparkEnv.get.mapOutputTracker,
     shouldBatchFetch: Boolean = false)
   extends ShuffleReader[K, C] with Logging {
-
-  private val dep = handle.dependency
 
   private def fetchContinuousBlocksInBatch: Boolean = {
     val conf = SparkEnv.get.conf

@@ -21,6 +21,7 @@ import java.io.IOException;
 import java.util.Map;
 import java.util.Optional;
 
+import org.apache.spark.ShuffleDependency;
 import org.apache.spark.annotation.Private;
 
 /**
@@ -75,7 +76,11 @@ public interface ShuffleExecutorComponents {
   }
 
   // Return an iterator for the shuffle data defined by the args.
-  <K, C> ShuffleIterator<K, C> readShuffle(int shuffleId, int reduceId, ShuffleMetadata metadata)
+  <K, V, C> ShuffleIterator<K, C> readShuffle(
+      ShuffleDependency<K, V, C> shuffleDep,
+      int startPartition,
+      int endPartition,
+      Optional<ShuffleMetadata> metadata)
     throws IOException, FetchFailedException;
 
 }

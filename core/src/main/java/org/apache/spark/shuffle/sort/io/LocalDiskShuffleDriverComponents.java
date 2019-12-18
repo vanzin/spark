@@ -23,6 +23,7 @@ import java.util.Optional;
 
 import org.apache.spark.SparkEnv;
 import org.apache.spark.shuffle.api.ShuffleDriverComponents;
+import org.apache.spark.shuffle.api.ShuffleOutputTracker;
 import org.apache.spark.storage.BlockManagerMaster;
 
 public class LocalDiskShuffleDriverComponents implements ShuffleDriverComponents {

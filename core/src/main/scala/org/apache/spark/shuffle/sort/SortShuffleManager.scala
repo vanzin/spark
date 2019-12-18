@@ -24,7 +24,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark._
 import org.apache.spark.internal.{config, Logging}
 import org.apache.spark.shuffle._
-import org.apache.spark.shuffle.api.{ShuffleDataIO, ShuffleExecutorComponents}
+import org.apache.spark.shuffle.api._
 import org.apache.spark.util.Utils
 import org.apache.spark.util.collection.OpenHashSet
 
@@ -124,11 +124,36 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
       endPartition: Int,
       context: TaskContext,
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
-    val blocksByAddress = SparkEnv.get.mapOutputTracker.getMapSizesByExecutorId(
-      handle.shuffleId, startPartition, endPartition)
-    new BlockStoreShuffleReader(
-      handle.asInstanceOf[BaseShuffleHandle[K, _, C]], blocksByAddress, context, metrics,
-      shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
+    val shuffleMetadata = java.util.Optional.ofNullable(
+      SparkEnv.get.mapOutputTracker.getShuffleMetadata(handle.shuffleId).orNull)
+
+    val iterator = shuffleExecutorComponents.readShuffle(
+      handle.asInstanceOf[BaseShuffleHandle[K, _, C]].dependency,
+      startPartition, endPartition, shuffleMetadata)
+
+    class PairWrapper[K, C] extends Product2[K, C] {
+      var pair: Pair[K, C] = null
+
+      override def _1: K = pair.key
+      override def _2: C = pair.value
+
+      override def canEqual(that: Any): Boolean = false
+    }
+
+    new ShuffleReader[K, C]() {
+      override def read(): Iterator[Product2[K, C]] = {
+        val pairWrapper = new PairWrapper[K, C]()
+
+        new Iterator[Product2[K, C]]() {
+          override def hasNext: Boolean = iterator.hasNext()
+
+          override def next: Product2[K, C] = {
+            pairWrapper.pair = iterator.next()
+            pairWrapper
+          }
+        }
+      }
+    }
   }
 
   override def getReaderForOneMapper[K, C](
@@ -141,7 +166,7 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
     val blocksByAddress = SparkEnv.get.mapOutputTracker.getMapSizesByMapIndex(
       handle.shuffleId, mapIndex, startPartition, endPartition)
     new BlockStoreShuffleReader(
-      handle.asInstanceOf[BaseShuffleHandle[K, _, C]], blocksByAddress, context, metrics,
+      handle.asInstanceOf[BaseShuffleHandle[K, _, C]].dependency, blocksByAddress, context, metrics,
       shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
   }
 

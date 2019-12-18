@@ -18,8 +18,7 @@
 package org.apache.spark
 
 import java.io.{ByteArrayInputStream, ObjectInputStream, ObjectOutputStream}
-import java.util.concurrent.{ConcurrentHashMap, LinkedBlockingQueue, ThreadPoolExecutor, TimeUnit}
-import java.util.concurrent.locks.ReentrantReadWriteLock
+import java.util.concurrent._
 
 import scala.collection.JavaConverters._
 import scala.collection.mutable.{HashMap, ListBuffer, Map}
@@ -35,218 +34,11 @@ import org.apache.spark.internal.Logging
 import org.apache.spark.internal.config._
 import org.apache.spark.io.CompressionCodec
 import org.apache.spark.rpc.{RpcCallContext, RpcEndpoint, RpcEndpointRef, RpcEnv}
-import org.apache.spark.scheduler.{ExecutorCacheTaskLocation, MapStatus}
+import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.MetadataFetchFailedException
+import org.apache.spark.shuffle.api.{MapOutputMetadata, ShuffleMetadata, ShuffleOutputTracker}
 import org.apache.spark.storage.{BlockId, BlockManagerId, ShuffleBlockId}
 import org.apache.spark.util._
-
-/**
- * Helper class used by the [[MapOutputTrackerMaster]] to perform bookkeeping for a single
- * ShuffleMapStage.
- *
- * This class maintains a mapping from map index to `MapStatus`. It also maintains a cache of
- * serialized map statuses in order to speed up tasks' requests for map output statuses.
- *
- * All public methods of this class are thread-safe.
- */
-private class ShuffleStatus(numPartitions: Int) {
-
-  private val (readLock, writeLock) = {
-    val lock = new ReentrantReadWriteLock()
-    (lock.readLock(), lock.writeLock())
-  }
-
-  // All accesses to the following state must be guarded with `withReadLock` or `withWriteLock`.
-  private def withReadLock[B](fn: => B): B = {
-    readLock.lock()
-    try {
-      fn
-    } finally {
-      readLock.unlock()
-    }
-  }
-
-  private def withWriteLock[B](fn: => B): B = {
-    writeLock.lock()
-    try {
-      fn
-    } finally {
-      writeLock.unlock()
-    }
-  }
-
-  /**
-   * MapStatus for each partition. The index of the array is the map partition id.
-   * Each value in the array is the MapStatus for a partition, or null if the partition
-   * is not available. Even though in theory a task may run multiple times (due to speculation,
-   * stage retries, etc.), in practice the likelihood of a map output being available at multiple
-   * locations is so small that we choose to ignore that case and store only a single location
-   * for each output.
-   */
-  // Exposed for testing
-  val mapStatuses = new Array[MapStatus](numPartitions)
-
-  /**
-   * The cached result of serializing the map statuses array. This cache is lazily populated when
-   * [[serializedMapStatus]] is called. The cache is invalidated when map outputs are removed.
-   */
-  private[this] var cachedSerializedMapStatus: Array[Byte] = _
-
-  /**
-   * Broadcast variable holding serialized map output statuses array. When [[serializedMapStatus]]
-   * serializes the map statuses array it may detect that the result is too large to send in a
-   * single RPC, in which case it places the serialized array into a broadcast variable and then
-   * sends a serialized broadcast variable instead. This variable holds a reference to that
-   * broadcast variable in order to keep it from being garbage collected and to allow for it to be
-   * explicitly destroyed later on when the ShuffleMapStage is garbage-collected.
-   */
-  private[this] var cachedSerializedBroadcast: Broadcast[Array[Byte]] = _
-
-  /**
-   * Counter tracking the number of partitions that have output. This is a performance optimization
-   * to avoid having to count the number of non-null entries in the `mapStatuses` array and should
-   * be equivalent to`mapStatuses.count(_ ne null)`.
-   */
-  private[this] var _numAvailableOutputs: Int = 0
-
-  /**
-   * Register a map output. If there is already a registered location for the map output then it
-   * will be replaced by the new location.
-   */
-  def addMapOutput(mapIndex: Int, status: MapStatus): Unit = withWriteLock {
-    if (mapStatuses(mapIndex) == null) {
-      _numAvailableOutputs += 1
-      invalidateSerializedMapOutputStatusCache()
-    }
-    mapStatuses(mapIndex) = status
-  }
-
-  /**
-   * Remove the map output which was served by the specified block manager.
-   * This is a no-op if there is no registered map output or if the registered output is from a
-   * different block manager.
-   */
-  def removeMapOutput(mapIndex: Int, bmAddress: BlockManagerId): Unit = withWriteLock {
-    if (mapStatuses(mapIndex) != null && mapStatuses(mapIndex).location == bmAddress) {
-      _numAvailableOutputs -= 1
-      mapStatuses(mapIndex) = null
-      invalidateSerializedMapOutputStatusCache()
-    }
-  }
-
-  /**
-   * Removes all shuffle outputs associated with this host. Note that this will also remove
-   * outputs which are served by an external shuffle server (if one exists).
-   */
-  def removeOutputsOnHost(host: String): Unit = withWriteLock {
-    removeOutputsByFilter(x => x.host == host)
-  }
-
-  /**
-   * Removes all map outputs associated with the specified executor. Note that this will also
-   * remove outputs which are served by an external shuffle server (if one exists), as they are
-   * still registered with that execId.
-   */
-  def removeOutputsOnExecutor(execId: String): Unit = withWriteLock {
-    removeOutputsByFilter(x => x.executorId == execId)
-  }
-
-  /**
-   * Removes all shuffle outputs which satisfies the filter. Note that this will also
-   * remove outputs which are served by an external shuffle server (if one exists).
-   */
-  def removeOutputsByFilter(f: BlockManagerId => Boolean): Unit = withWriteLock {
-    for (mapIndex <- mapStatuses.indices) {
-      if (mapStatuses(mapIndex) != null && f(mapStatuses(mapIndex).location)) {
-        _numAvailableOutputs -= 1
-        mapStatuses(mapIndex) = null
-        invalidateSerializedMapOutputStatusCache()
-      }
-    }
-  }
-
-  /**
-   * Number of partitions that have shuffle outputs.
-   */
-  def numAvailableOutputs: Int = withReadLock {
-    _numAvailableOutputs
-  }
-
-  /**
-   * Returns the sequence of partition ids that are missing (i.e. needs to be computed).
-   */
-  def findMissingPartitions(): Seq[Int] = withReadLock {
-    val missing = (0 until numPartitions).filter(id => mapStatuses(id) == null)
-    assert(missing.size == numPartitions - _numAvailableOutputs,
-      s"${missing.size} missing, expected ${numPartitions - _numAvailableOutputs}")
-    missing
-  }
-
-  /**
-   * Serializes the mapStatuses array into an efficient compressed format. See the comments on
-   * `MapOutputTracker.serializeMapStatuses()` for more details on the serialization format.
-   *
-   * This method is designed to be called multiple times and implements caching in order to speed
-   * up subsequent requests. If the cache is empty and multiple threads concurrently attempt to
-   * serialize the map statuses then serialization will only be performed in a single thread and all
-   * other threads will block until the cache is populated.
-   */
-  def serializedMapStatus(
-      broadcastManager: BroadcastManager,
-      isLocal: Boolean,
-      minBroadcastSize: Int,
-      conf: SparkConf): Array[Byte] = {
-    var result: Array[Byte] = null
-
-    withReadLock {
-      if (cachedSerializedMapStatus != null) {
-        result = cachedSerializedMapStatus
-      }
-    }
-
-    if (result == null) withWriteLock {
-      if (cachedSerializedMapStatus == null) {
-        val serResult = MapOutputTracker.serializeMapStatuses(
-          mapStatuses, broadcastManager, isLocal, minBroadcastSize, conf)
-        cachedSerializedMapStatus = serResult._1
-        cachedSerializedBroadcast = serResult._2
-      }
-      // The following line has to be outside if statement since it's possible that another thread
-      // initializes cachedSerializedMapStatus in-between `withReadLock` and `withWriteLock`.
-      result = cachedSerializedMapStatus
-    }
-    result
-  }
-
-  // Used in testing.
-  def hasCachedSerializedBroadcast: Boolean = withReadLock {
-    cachedSerializedBroadcast != null
-  }
-
-  /**
-   * Helper function which provides thread-safe access to the mapStatuses array.
-   * The function should NOT mutate the array.
-   */
-  def withMapStatuses[T](f: Array[MapStatus] => T): T = withReadLock {
-    f(mapStatuses)
-  }
-
-  /**
-   * Clears the cached serialized map output statuses.
-   */
-  def invalidateSerializedMapOutputStatusCache(): Unit = withWriteLock {
-    if (cachedSerializedBroadcast != null) {
-      // Prevent errors during broadcast cleanup from crashing the DAGScheduler (see SPARK-21444)
-      Utils.tryLogNonFatalError {
-        // Use `blocking = false` so that this operation doesn't hang while trying to send cleanup
-        // RPCs to dead executors.
-        cachedSerializedBroadcast.destroy()
-      }
-      cachedSerializedBroadcast = null
-    }
-    cachedSerializedMapStatus = null
-  }
-}
 
 private[spark] sealed trait MapOutputTrackerMessage
 private[spark] case class GetMapOutputStatuses(shuffleId: Int)
@@ -319,12 +111,6 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
     }
   }
 
-  // For testing
-  def getMapSizesByExecutorId(shuffleId: Int, reduceId: Int)
-      : Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])] = {
-    getMapSizesByExecutorId(shuffleId, reduceId, reduceId + 1)
-  }
-
   /**
    * Called from executors to get the server URIs and output sizes for each shuffle block that
    * needs to be read from a given range of map output partitions (startPartition is included but
@@ -360,6 +146,8 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
    */
   def unregisterShuffle(shuffleId: Int): Unit
 
+  def getShuffleMetadata(shuffleId: Int): Option[ShuffleMetadata]
+
   def stop(): Unit = {}
 }
 
@@ -377,6 +165,10 @@ private[spark] class MapOutputTrackerMaster(
     private[spark] val broadcastManager: BroadcastManager,
     private[spark] val isLocal: Boolean)
   extends MapOutputTracker(conf) {
+
+  // XXX: should really be a constructor argument, but initialization is a web of interdependencies
+  // making that pretty hard.
+  var outputTracker: Option[ShuffleOutputTracker] = None
 
   // The size at which we use Broadcast to send the map output statuses to the executors
   private val minSizeForBroadcast = conf.get(SHUFFLE_MAPOUTPUT_MIN_SIZE_FOR_BROADCAST).toInt
@@ -396,15 +188,18 @@ private[spark] class MapOutputTrackerMaster(
   // can be read locally, but may lead to more delay in scheduling if those locations are busy.
   private val REDUCER_PREF_LOCS_FRACTION = 0.2
 
-  // HashMap for storing shuffleStatuses in the driver.
-  // Statuses are dropped only by explicit de-registering.
-  // Exposed for testing
-  val shuffleStatuses = new ConcurrentHashMap[Int, ShuffleStatus]().asScala
-
   private val maxRpcMessageSize = RpcUtils.maxMessageSizeBytes(conf)
 
   // requests for map output statuses
   private val mapOutputRequests = new LinkedBlockingQueue[GetMapOutputMessage]
+
+  private val knownShuffles = new CopyOnWriteArraySet[Int]()
+  private val serializationCache = new ConcurrentHashMap[Int, SerializedShuffleMetadata]()
+  private val serializationLock = new KeyLock[Int]()
+
+  private case class SerializedShuffleMetadata(
+      data: Array[Byte],
+      broadcast: Broadcast[Array[Byte]])
 
   // Thread pool used for handling map output status requests. This is a separate thread pool
   // to ensure we don't block the normal dispatcher threads.
@@ -431,6 +226,27 @@ private[spark] class MapOutputTrackerMaster(
     mapOutputRequests.offer(message)
   }
 
+  private def serializedStatus(shuffleId: Int): Array[Byte] = {
+    var cached = serializationCache.get(shuffleId)
+    if (cached == null) {
+      serializationLock.withLock(shuffleId) {
+        cached = serializationCache.get(shuffleId)
+        if (cached == null) {
+          val metadata = outputTracker.flatMap { ot =>
+            Option(ot.shuffleMetadata(shuffleId).orElse(null))
+          }
+
+          val (data, bcast) = MapOutputTracker.serializeMapStatuses(metadata, broadcastManager,
+            isLocal, minSizeForBroadcast, conf)
+
+          cached = SerializedShuffleMetadata(data, bcast)
+          serializationCache.put(shuffleId, cached)
+        }
+      }
+    }
+    cached.data
+  }
+
   /** Message loop used for dispatching messages. */
   private class MessageLoop extends Runnable {
     override def run(): Unit = {
@@ -448,10 +264,7 @@ private[spark] class MapOutputTrackerMaster(
             val hostPort = context.senderAddress.hostPort
             logDebug("Handling request to send map output locations for shuffle " + shuffleId +
               " to " + hostPort)
-            val shuffleStatus = shuffleStatuses.get(shuffleId).head
-            context.reply(
-              shuffleStatus.serializedMapStatus(broadcastManager, isLocal, minSizeForBroadcast,
-                conf))
+            context.reply(serializedStatus(shuffleId))
           } catch {
             case NonFatal(e) => logError(e.getMessage, e)
           }
@@ -465,49 +278,40 @@ private[spark] class MapOutputTrackerMaster(
   /** A poison endpoint that indicates MessageLoop should exit its message loop. */
   private val PoisonPill = new GetMapOutputMessage(-99, null)
 
-  // Used only in unit tests.
-  private[spark] def getNumCachedSerializedBroadcast: Int = {
-    shuffleStatuses.valuesIterator.count(_.hasCachedSerializedBroadcast)
-  }
-
   def registerShuffle(shuffleId: Int, numMaps: Int): Unit = {
-    if (shuffleStatuses.put(shuffleId, new ShuffleStatus(numMaps)).isDefined) {
-      throw new IllegalArgumentException("Shuffle ID " + shuffleId + " registered twice")
-    }
+    knownShuffles.add(shuffleId)
+    outputTracker.foreach(_.registerShuffle(shuffleId, numMaps))
   }
 
-  def registerMapOutput(shuffleId: Int, mapIndex: Int, status: MapStatus): Unit = {
-    shuffleStatuses(shuffleId).addMapOutput(mapIndex, status)
+  def registerMapOutput(shuffleId: Int, mapIndex: Int, status: MapOutputMetadata): Unit = {
+    outputTracker.foreach { ot =>
+      if (ot.registerOutput(shuffleId, mapIndex, status)) {
+        serializationCache.remove(shuffleId)
+      }
+    }
   }
 
   /** Unregister map output information of the given shuffle, mapper and block manager */
   def unregisterMapOutput(shuffleId: Int, mapIndex: Int, bmAddress: BlockManagerId): Unit = {
-    shuffleStatuses.get(shuffleId) match {
-      case Some(shuffleStatus) =>
-        shuffleStatus.removeMapOutput(mapIndex, bmAddress)
-        incrementEpoch()
-      case None =>
-        throw new SparkException("unregisterMapOutput called for nonexistent shuffle ID")
-    }
+    logError(s"Need to implement proper fetch failure support.")
   }
 
   /** Unregister all map output information of the given shuffle. */
   def unregisterAllMapOutput(shuffleId: Int): Unit = {
-    shuffleStatuses.get(shuffleId) match {
-      case Some(shuffleStatus) =>
-        shuffleStatus.removeOutputsByFilter(x => true)
+    outputTracker.foreach { ot =>
+      if (ot.invalidateShuffle(shuffleId)) {
+        serializationCache.remove(shuffleId)
         incrementEpoch()
-      case None =>
-        throw new SparkException(
-          s"unregisterAllMapOutput called for nonexistent shuffle ID $shuffleId.")
+      }
     }
   }
 
   /** Unregister shuffle data */
   def unregisterShuffle(shuffleId: Int): Unit = {
-    shuffleStatuses.remove(shuffleId).foreach { shuffleStatus =>
-      shuffleStatus.invalidateSerializedMapOutputStatusCache()
+    outputTracker.foreach { ot =>
+      ot.unregisterShuffle(shuffleId)
     }
+    serializationCache.remove(shuffleId)
   }
 
   /**
@@ -515,7 +319,7 @@ private[spark] class MapOutputTrackerMaster(
    * outputs which are served by an external shuffle server (if one exists).
    */
   def removeOutputsOnHost(host: String): Unit = {
-    shuffleStatuses.valuesIterator.foreach { _.removeOutputsOnHost(host) }
+    logError(s"Need to implement proper fetch failure support.")
     incrementEpoch()
   }
 
@@ -525,15 +329,15 @@ private[spark] class MapOutputTrackerMaster(
    * registered with this execId.
    */
   def removeOutputsOnExecutor(execId: String): Unit = {
-    shuffleStatuses.valuesIterator.foreach { _.removeOutputsOnExecutor(execId) }
+    logError(s"Need to implement proper fetch failure support.")
     incrementEpoch()
   }
 
   /** Check if the given shuffle is being tracked */
-  def containsShuffle(shuffleId: Int): Boolean = shuffleStatuses.contains(shuffleId)
+  def containsShuffle(shuffleId: Int): Boolean = knownShuffles.contains(shuffleId)
 
   def getNumAvailableOutputs(shuffleId: Int): Int = {
-    shuffleStatuses.get(shuffleId).map(_.numAvailableOutputs).getOrElse(0)
+    outputTracker.map(_.numAvailableOutputs(shuffleId)).getOrElse(0)
   }
 
   /**
@@ -541,7 +345,11 @@ private[spark] class MapOutputTrackerMaster(
    * if the MapOutputTrackerMaster doesn't know about this shuffle.
    */
   def findMissingPartitions(shuffleId: Int): Option[Seq[Int]] = {
-    shuffleStatuses.get(shuffleId).map(_.findMissingPartitions())
+    if (knownShuffles.contains(shuffleId)) {
+      outputTracker.map(_.findMissingPartitions(shuffleId).toSeq)
+    } else {
+      None
+    }
   }
 
   /**
@@ -577,6 +385,9 @@ private[spark] class MapOutputTrackerMaster(
    * Return statistics about all of the outputs for a given shuffle.
    */
   def getStatistics(dep: ShuffleDependency[_, _, _]): MapOutputStatistics = {
+    new MapOutputStatistics(dep.shuffleId, new Array[Long](dep.partitioner.numPartitions))
+    /*
+    TODO: no idea.
     shuffleStatuses(dep.shuffleId).withMapStatuses { statuses =>
       val totalSizes = new Array[Long](dep.partitioner.numPartitions)
       val parallelAggThreshold = conf.get(
@@ -608,6 +419,7 @@ private[spark] class MapOutputTrackerMaster(
       }
       new MapOutputStatistics(dep.shuffleId, totalSizes)
     }
+    */
   }
 
   /**
@@ -620,6 +432,10 @@ private[spark] class MapOutputTrackerMaster(
    */
   def getPreferredLocationsForShuffle(dep: ShuffleDependency[_, _, _], partitionId: Int)
       : Seq[String] = {
+    Nil
+    /*
+    TODO: need to abstract this through the plugin interface. Maybe.
+
     if (shuffleLocalityEnabled && dep.rdd.partitions.length < SHUFFLE_PREF_MAP_THRESHOLD &&
         dep.partitioner.numPartitions < SHUFFLE_PREF_REDUCE_THRESHOLD) {
       val blockManagerIds = getLocationsWithLargestOutputs(dep.shuffleId, partitionId,
@@ -632,6 +448,7 @@ private[spark] class MapOutputTrackerMaster(
     } else {
       Nil
     }
+    */
   }
 
   /**
@@ -650,6 +467,9 @@ private[spark] class MapOutputTrackerMaster(
       numReducers: Int,
       fractionThreshold: Double)
     : Option[Array[BlockManagerId]] = {
+
+    /*
+    TODO: need to abstract this through the plugin interface. Maybe.
 
     val shuffleStatus = shuffleStatuses.get(shuffleId).orNull
     if (shuffleStatus != null) {
@@ -684,6 +504,8 @@ private[spark] class MapOutputTrackerMaster(
         }
       }
     }
+    */
+
     None
   }
 
@@ -697,6 +519,11 @@ private[spark] class MapOutputTrackerMaster(
    */
   def getMapLocation(dep: ShuffleDependency[_, _, _], mapId: Int): Seq[String] =
   {
+    Nil
+    /*
+    TODO: very specific to LocalShuffleRowRDD. Maybe abstract through plugin API, maybe hardcode
+    in local disk implementation, who knows...
+
     val shuffleStatus = shuffleStatuses.get(dep.shuffleId).orNull
     if (shuffleStatus != null) {
       shuffleStatus.withMapStatuses { statuses =>
@@ -709,6 +536,7 @@ private[spark] class MapOutputTrackerMaster(
     } else {
       Nil
     }
+    */
   }
 
   def incrementEpoch(): Unit = {
@@ -732,6 +560,8 @@ private[spark] class MapOutputTrackerMaster(
       startPartition: Int,
       endPartition: Int)
   : Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])] = {
+    /*
+    TODO: this needs to be in the local disk plugin implementation (see SortShuffleManager).
     logDebug(s"Fetching outputs for shuffle $shuffleId, partitions $startPartition-$endPartition")
     shuffleStatuses.get(shuffleId) match {
       case Some (shuffleStatus) =>
@@ -742,6 +572,8 @@ private[spark] class MapOutputTrackerMaster(
       case None =>
         Iterator.empty
     }
+    */
+    Iterator.empty
   }
 
   override def getMapSizesByMapIndex(
@@ -749,6 +581,8 @@ private[spark] class MapOutputTrackerMaster(
       mapIndex: Int,
       startPartition: Int,
       endPartition: Int): Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])] = {
+    /*
+    TODO: this needs to be in the local disk plugin implementation (see SortShuffleManager).
     logDebug(s"Fetching outputs for shuffle $shuffleId, mapIndex $mapIndex" +
       s"partitions $startPartition-$endPartition")
     shuffleStatuses.get(shuffleId) match {
@@ -764,6 +598,8 @@ private[spark] class MapOutputTrackerMaster(
       case None =>
         Iterator.empty
     }
+    */
+    Iterator.empty
   }
 
   override def stop(): Unit = {
@@ -771,7 +607,13 @@ private[spark] class MapOutputTrackerMaster(
     threadpool.shutdown()
     sendTracker(StopMapOutputTracker)
     trackerEndpoint = null
-    shuffleStatuses.clear()
+  }
+
+  override def getShuffleMetadata(shuffleId: Int): Option[ShuffleMetadata] = {
+    outputTracker match {
+      case Some(ot) => Option(ot.shuffleMetadata(shuffleId).orElse(null))
+      case _ => None
+    }
   }
 }
 
@@ -783,8 +625,7 @@ private[spark] class MapOutputTrackerMaster(
  */
 private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTracker(conf) {
 
-  val mapStatuses: Map[Int, Array[MapStatus]] =
-    new ConcurrentHashMap[Int, Array[MapStatus]]().asScala
+  val mapStatuses = new ConcurrentHashMap[Int, Option[ShuffleMetadata]]()
 
   /**
    * A [[KeyLock]] whose key is a shuffle id to ensure there is only one thread fetching
@@ -798,6 +639,8 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
       startPartition: Int,
       endPartition: Int)
     : Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])] = {
+    /*
+    TODO: probably should be in the local disk plugin.?
     logDebug(s"Fetching outputs for shuffle $shuffleId, partitions $startPartition-$endPartition")
     val statuses = getStatuses(shuffleId, conf)
     try {
@@ -809,6 +652,8 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
         mapStatuses.clear()
         throw e
     }
+    */
+    Iterator.empty
   }
 
   override def getMapSizesByMapIndex(
@@ -816,6 +661,10 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
       mapIndex: Int,
       startPartition: Int,
       endPartition: Int): Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])] = {
+    /*
+    TODO: probably should be in the local disk plugin? Used by getReaderForOneMapper which seems
+    to be used only by LocalShuffleRowRDD.
+
     logDebug(s"Fetching outputs for shuffle $shuffleId, mapIndex $mapIndex" +
       s"partitions $startPartition-$endPartition")
     val statuses = getStatuses(shuffleId, conf)
@@ -828,6 +677,8 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
         mapStatuses.clear()
         throw e
     }
+    */
+    Iterator.empty
   }
 
   /**
@@ -836,13 +687,13 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
    *
    * (It would be nice to remove this restriction in the future.)
    */
-  private def getStatuses(shuffleId: Int, conf: SparkConf): Array[MapStatus] = {
-    val statuses = mapStatuses.get(shuffleId).orNull
+  private def getStatuses(shuffleId: Int, conf: SparkConf): Option[ShuffleMetadata] = {
+    val statuses = mapStatuses.get(shuffleId)
     if (statuses == null) {
       logInfo("Don't have map outputs for shuffle " + shuffleId + ", fetching them")
       val startTimeNs = System.nanoTime()
       fetchingLock.withLock(shuffleId) {
-        var fetchedStatuses = mapStatuses.get(shuffleId).orNull
+        var fetchedStatuses = mapStatuses.get(shuffleId)
         if (fetchedStatuses == null) {
           logInfo("Doing the fetch; tracker endpoint = " + trackerEndpoint)
           val fetchedBytes = askTracker[Array[Byte]](GetMapOutputStatuses(shuffleId))
@@ -879,6 +730,10 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
       }
     }
   }
+
+  override def getShuffleMetadata(shuffleId: Int): Option[ShuffleMetadata] = {
+    getStatuses(shuffleId, conf)
+  }
 }
 
 private[spark] object MapOutputTracker extends Logging {
@@ -891,7 +746,7 @@ private[spark] object MapOutputTracker extends Logging {
   // it to reduce tasks. We do this by compressing the serialized bytes using Zstd. They will
   // generally be pretty compressible because many map outputs will be on the same hostname.
   def serializeMapStatuses(
-      statuses: Array[MapStatus],
+      statuses: Option[ShuffleMetadata],
       broadcastManager: BroadcastManager,
       isLocal: Boolean,
       minBroadcastSize: Int,
@@ -935,7 +790,7 @@ private[spark] object MapOutputTracker extends Logging {
   }
 
   // Opposite of serializeMapStatuses.
-  def deserializeMapStatuses(bytes: Array[Byte], conf: SparkConf): Array[MapStatus] = {
+  def deserializeMapStatuses(bytes: Array[Byte], conf: SparkConf): Option[ShuffleMetadata] = {
     assert (bytes.length > 0)
 
     def deserializeObject(arr: Array[Byte], off: Int, len: Int): AnyRef = {
@@ -954,7 +809,7 @@ private[spark] object MapOutputTracker extends Logging {
 
     bytes(0) match {
       case DIRECT =>
-        deserializeObject(bytes, 1, bytes.length - 1).asInstanceOf[Array[MapStatus]]
+        deserializeObject(bytes, 1, bytes.length - 1).asInstanceOf[Option[ShuffleMetadata]]
       case BROADCAST =>
         // deserialize the Broadcast, pull .value array out of it, and then deserialize that
         val bcast = deserializeObject(bytes, 1, bytes.length - 1).
@@ -962,7 +817,8 @@ private[spark] object MapOutputTracker extends Logging {
         logInfo("Broadcast mapstatuses size = " + bytes.length +
           ", actual size = " + bcast.value.length)
         // Important - ignore the DIRECT tag ! Start from offset 1
-        deserializeObject(bcast.value, 1, bcast.value.length - 1).asInstanceOf[Array[MapStatus]]
+        deserializeObject(bcast.value, 1, bcast.value.length - 1)
+          .asInstanceOf[Option[ShuffleMetadata]]
       case _ => throw new IllegalArgumentException("Unexpected byte tag = " + bytes(0))
     }
   }

@@ -536,6 +536,9 @@ class SparkContext(config: SparkConf) extends Logging {
       _conf.set(ShuffleDataIOUtils.SHUFFLE_SPARK_CONF_PREFIX + k, v)
     }
 
+    env.mapOutputTracker.asInstanceOf[MapOutputTrackerMaster].outputTracker =
+      Option(_shuffleDriverComponents.createOutputTracker().orElse(null))
+
     // We need to register "HeartbeatReceiver" before "createTaskScheduler" because Executor will
     // retrieve "HeartbeatReceiver" in the constructor. (SPARK-6640)
     _heartbeatReceiver = env.rpcEnv.setupEndpoint(

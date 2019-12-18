@@ -28,9 +28,20 @@ import com.google.common.base.Preconditions;
 
 import org.apache.spark.scheduler.MapStatus;
 import org.apache.spark.shuffle.api.FetchFailedException;
+import org.apache.spark.shuffle.api.MapOutputMetadata;
 import org.apache.spark.shuffle.api.ShuffleMetadata;
 import org.apache.spark.shuffle.api.ShuffleOutputTracker;
 import org.apache.spark.storage.BlockManagerId;
+
+class LocalDiskShuffleMetadata implements ShuffleMetadata {
+
+  final MapStatus[] statuses;
+
+  LocalDiskShuffleMetadata(MapStatus[] statuses) {
+    this.statuses = statuses;
+  }
+
+}
 
 class ShuffleStatus {
 
@@ -194,6 +205,13 @@ class ShuffleStatus {
       readLock.unlock();
     }
   }
+
+  // TODO: this isn't thread safe since another thread might modify the returned array while the
+  // caller may be processing it. But as far as I can see, that race exists in the current master
+  // MapOutputTracker anyway.
+  LocalDiskShuffleMetadata toMetadata() {
+    return new LocalDiskShuffleMetadata(statuses);
+  }
 }
 
 class LocalDiskOutputTracker implements ShuffleOutputTracker {
@@ -208,8 +226,8 @@ class LocalDiskOutputTracker implements ShuffleOutputTracker {
   }
 
   @Override
-  public boolean registerOutput(int shuffleId, int mapIndex, MapStatus status) {
-    return shuffle(shuffleId).addMapOutput(mapIndex, status);
+  public boolean registerOutput(int shuffleId, int mapIndex, MapOutputMetadata status) {
+    return shuffle(shuffleId).addMapOutput(mapIndex, (MapStatus) status);
   }
 
   @Override
@@ -229,7 +247,7 @@ class LocalDiskOutputTracker implements ShuffleOutputTracker {
 
   @Override
   public int[] findMissingPartitions(int shuffleId) {
-    return shuffles(shuffleId).findMissingPartitions();
+    return shuffle(shuffleId).findMissingPartitions();
   }
 
   @Override
@@ -240,7 +258,8 @@ class LocalDiskOutputTracker implements ShuffleOutputTracker {
 
   @Override
   public Optional<ShuffleMetadata> shuffleMetadata(int shuffleId) {
-    throw new UnsupportedOperationException();
+    ShuffleStatus shuffle = shuffles.get(shuffleId);
+    return Optional.ofNullable(shuffle != null ? shuffle.toMetadata() : null);
   }
 
   private ShuffleStatus shuffle(int shuffleId) {

@@ -25,6 +25,7 @@ import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkEnv;
+import org.apache.spark.ShuffleDependency;
 import org.apache.spark.shuffle.api.FetchFailedException;
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents;
 import org.apache.spark.shuffle.api.ShuffleIterator;
@@ -89,10 +90,20 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
   }
 
   @Override
-  public <K, C> ShuffleIterator<K, C> readShuffle(
-      int shuffleId,
-      int reduceId,
-      ShuffleMetadata metadata) throws IOException, FetchFailedException {
+  public <K, V, C> ShuffleIterator<K, C> readShuffle(
+      ShuffleDependency<K, V, C> shuffleDep,
+      int startPartition,
+      int endPartition,
+      Optional<ShuffleMetadata> metadata) throws IOException, FetchFailedException {
+    /*
+    TODO:
+    val blocksByAddress = SparkEnv.get.mapOutputTracker.getMapSizesByExecutorId(
+      handle.shuffleId, startPartition, endPartition)
+    new BlockStoreShuffleReader(
+      handle.asInstanceOf[BaseShuffleHandle[K, _, C]], blocksByAddress, context, metrics,
+      shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
+    */
+
     throw new UnsupportedOperationException();
   }
 
