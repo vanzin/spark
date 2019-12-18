@@ -15,20 +15,24 @@
  * limitations under the License.
  */
 
-package org.apache.spark.shuffle
+package org.apache.spark.shuffle.api;
 
-import java.io.IOException
+import java.io.IOException;
+import java.util.Map;
+import java.util.Optional;
 
-import org.apache.spark.shuffle.api.MapOutputMetadata
+import org.apache.spark.annotation.Private;
 
 /**
- * Obtained inside a map task to write out records to the shuffle system.
+ * :: Private ::
+ * A mutable pair representing one record in a shuffle file. Returned by shuffle reader
+ * implementations; it's designed to be re-used for each record read in a shuffle, instead
+ * of allocating a new pair on every call to {@link ShuffleIterator#next()}.
  */
-private[spark] abstract class ShuffleWriter[K, V] {
-  /** Write a sequence of records to this task's output */
-  @throws[IOException]
-  def write(records: Iterator[Product2[K, V]]): Unit
+@Private
+public final class Pair<K, C> {
 
-  /** Close this writer, passing along whether the map completed */
-  def stop(success: Boolean): Option[MapOutputMetadata]
+  public K key;
+  public C value;
+
 }

@@ -63,7 +63,7 @@ public interface ShuffleMapOutputWriter {
    * The returned array should contain, for each partition from (0) to (numPartitions - 1), the
    * number of bytes written by the partition writer for that partition id.
    */
-  long[] commitAllPartitions() throws IOException;
+  MapOutputMetadata commitAllPartitions() throws IOException;
 
   /**
    * Abort all of the writes done by any writers returned by {@link #getPartitionWriter(int)}.

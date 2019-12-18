@@ -51,6 +51,7 @@ import org.apache.spark.shuffle.ShuffleWriteMetricsReporter;
 import org.apache.spark.serializer.SerializationStream;
 import org.apache.spark.serializer.SerializerInstance;
 import org.apache.spark.shuffle.ShuffleWriter;
+import org.apache.spark.shuffle.api.MapOutputMetadata;
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents;
 import org.apache.spark.shuffle.api.ShuffleMapOutputWriter;
 import org.apache.spark.shuffle.api.ShufflePartitionWriter;
@@ -85,7 +86,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   private final int initialSortBufferSize;
   private final int inputBufferSizeInBytes;
 
-  @Nullable private MapStatus mapStatus;
+  @Nullable private MapOutputMetadata mapStatus;
   @Nullable private ShuffleExternalSorter sorter;
   private long peakMemoryUsedBytes = 0;
 
@@ -218,9 +219,9 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     serOutputStream = null;
     final SpillInfo[] spills = sorter.closeAndGetSpills();
     sorter = null;
-    final long[] partitionLengths;
+    final MapOutputMetadata mapStatus;
     try {
-      partitionLengths = mergeSpills(spills);
+      mapStatus = mergeSpills(spills);
     } finally {
       for (SpillInfo spill : spills) {
         if (spill.file.exists() && !spill.file.delete()) {
@@ -228,8 +229,6 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
         }
       }
     }
-    mapStatus = MapStatus$.MODULE$.apply(
-      blockManager.shuffleServerId(), partitionLengths, mapId);
   }
 
   @VisibleForTesting
@@ -261,8 +260,8 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
    *
    * @return the partition lengths in the merged file.
    */
-  private long[] mergeSpills(SpillInfo[] spills) throws IOException {
-    long[] partitionLengths;
+  private MapOutputMetadata mergeSpills(SpillInfo[] spills) throws IOException {
+    MapOutputMetadata mapStatus;
     if (spills.length == 0) {
       final ShuffleMapOutputWriter mapWriter = shuffleExecutorComponents
           .createMapOutputWriter(shuffleId, mapId, partitioner.numPartitions());
@@ -273,19 +272,21 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       if (maybeSingleFileWriter.isPresent()) {
         // Here, we don't need to perform any metrics updates because the bytes written to this
         // output file would have already been counted as shuffle bytes written.
-        partitionLengths = spills[0].partitionLengths;
-        maybeSingleFileWriter.get().transferMapSpillFile(spills[0].file, partitionLengths);
+        maybeSingleFileWriter.get().transferMapSpillFile(spills[0].file, spills[0].partitionLengths);
+        // XXX HACK: makes a lot of assumptions.
+        mapStatus = MapStatus.apply(
+          blockManager.shuffleServerId(), spills[0].partitionLengths, mapId);
       } else {
-        partitionLengths = mergeSpillsUsingStandardWriter(spills);
+        mapStatus = mergeSpillsUsingStandardWriter(spills);
       }
     } else {
-      partitionLengths = mergeSpillsUsingStandardWriter(spills);
+      mapStatus = mergeSpillsUsingStandardWriter(spills);
     }
-    return partitionLengths;
+    return mapStatus;
   }
 
-  private long[] mergeSpillsUsingStandardWriter(SpillInfo[] spills) throws IOException {
-    long[] partitionLengths;
+  private MapOutputMetadata mergeSpillsUsingStandardWriter(SpillInfo[] spills) throws IOException {
+    MapOutputMetadata mapStatus;
     final boolean compressionEnabled = (boolean) sparkConf.get(package$.MODULE$.SHUFFLE_COMPRESS());
     final CompressionCodec compressionCodec = CompressionCodec$.MODULE$.createCodec(sparkConf);
     final boolean fastMergeEnabled =
@@ -327,7 +328,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       // to be counted as shuffle write, but this will lead to double-counting of the final
       // SpillInfo's bytes.
       writeMetrics.decBytesWritten(spills[spills.length - 1].file.length());
-      partitionLengths = mapWriter.commitAllPartitions();
+      mapStatus = mapWriter.commitAllPartitions();
     } catch (Exception e) {
       try {
         mapWriter.abort(e);
@@ -337,7 +338,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
       }
       throw e;
     }
-    return partitionLengths;
+    return mapStatus;
   }
 
   /**
@@ -477,7 +478,7 @@ public class UnsafeShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   }
 
   @Override
-  public Option<MapStatus> stop(boolean success) {
+  public Option<MapOutputMetadata> stop(boolean success) {
     try {
       taskContext.taskMetrics().incPeakExecutionMemory(getPeakMemoryUsedBytes());
 

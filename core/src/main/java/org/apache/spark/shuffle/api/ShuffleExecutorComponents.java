@@ -73,4 +73,9 @@ public interface ShuffleExecutorComponents {
       long mapId) throws IOException {
     return Optional.empty();
   }
+
+  // Return an iterator for the shuffle data defined by the args.
+  <K, C> ShuffleIterator<K, C> readShuffle(int shuffleId, int reduceId, ShuffleMetadata metadata)
+    throws IOException, FetchFailedException;
+
 }

@@ -19,6 +19,7 @@ package org.apache.spark.shuffle.sort.io;
 
 import java.util.Collections;
 import java.util.Map;
+import java.util.Optional;
 
 import org.apache.spark.SparkEnv;
 import org.apache.spark.shuffle.api.ShuffleDriverComponents;
@@ -45,5 +46,10 @@ public class LocalDiskShuffleDriverComponents implements ShuffleDriverComponents
       throw new IllegalStateException("Driver components must be initialized before using");
     }
     blockManagerMaster.removeShuffle(shuffleId, blocking);
+  }
+
+  @Override
+  public Optional<ShuffleOutputTracker> createOutputTracker() {
+    return Optional.of(new LocalDiskOutputTracker());
   }
 }

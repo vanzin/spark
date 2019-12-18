@@ -30,11 +30,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.spark.SparkConf;
+import org.apache.spark.scheduler.MapStatus;
+import org.apache.spark.shuffle.api.MapOutputMetadata;
 import org.apache.spark.shuffle.api.ShuffleMapOutputWriter;
 import org.apache.spark.shuffle.api.ShufflePartitionWriter;
 import org.apache.spark.shuffle.api.WritableByteChannelWrapper;
 import org.apache.spark.internal.config.package$;
 import org.apache.spark.shuffle.IndexShuffleBlockResolver;
+import org.apache.spark.storage.BlockManagerId;
 import org.apache.spark.util.Utils;
 
 /**
@@ -52,6 +55,8 @@ public class LocalDiskShuffleMapOutputWriter implements ShuffleMapOutputWriter {
   private final IndexShuffleBlockResolver blockResolver;
   private final long[] partitionLengths;
   private final int bufferSize;
+  private final BlockManagerId bmID;
+
   private int lastPartitionId = -1;
   private long currChannelPosition;
   private long bytesWrittenToMergedFile = 0L;
@@ -66,6 +71,7 @@ public class LocalDiskShuffleMapOutputWriter implements ShuffleMapOutputWriter {
       int shuffleId,
       long mapId,
       int numPartitions,
+      BlockManagerId bmID,
       IndexShuffleBlockResolver blockResolver,
       SparkConf sparkConf) {
     this.shuffleId = shuffleId;
@@ -77,6 +83,7 @@ public class LocalDiskShuffleMapOutputWriter implements ShuffleMapOutputWriter {
     this.partitionLengths = new long[numPartitions];
     this.outputFile = blockResolver.getDataFile(shuffleId, mapId);
     this.outputTempFile = null;
+    this.bmID = bmID;
   }
 
   @Override
@@ -97,7 +104,7 @@ public class LocalDiskShuffleMapOutputWriter implements ShuffleMapOutputWriter {
   }
 
   @Override
-  public long[] commitAllPartitions() throws IOException {
+  public MapOutputMetadata commitAllPartitions() throws IOException {
     // Check the position after transferTo loop to see if it is in the right position and raise a
     // exception if it is incorrect. The position will not be increased to the expected length
     // after calling transferTo in kernel version 2.6.32. This issue is described at
@@ -113,7 +120,7 @@ public class LocalDiskShuffleMapOutputWriter implements ShuffleMapOutputWriter {
     cleanUp();
     File resolvedTmp = outputTempFile != null && outputTempFile.isFile() ? outputTempFile : null;
     blockResolver.writeIndexFileAndCommit(shuffleId, mapId, partitionLengths, resolvedTmp);
-    return partitionLengths;
+    return MapStatus.apply(bmID, partitionLengths, mapId);
   }
 
   @Override

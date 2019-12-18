@@ -15,20 +15,22 @@
  * limitations under the License.
  */
 
-package org.apache.spark.shuffle
+package org.apache.spark.shuffle.api;
 
-import java.io.IOException
+import java.io.IOException;
+import java.util.Map;
+import java.util.Optional;
 
-import org.apache.spark.shuffle.api.MapOutputMetadata
+import org.apache.spark.annotation.Private;
 
 /**
- * Obtained inside a map task to write out records to the shuffle system.
+ * :: Private ::
  */
-private[spark] abstract class ShuffleWriter[K, V] {
-  /** Write a sequence of records to this task's output */
-  @throws[IOException]
-  def write(records: Iterator[Product2[K, V]]): Unit
+@Private
+public interface ShuffleIterator<K, C> {
 
-  /** Close this writer, passing along whether the map completed */
-  def stop(success: Boolean): Option[MapOutputMetadata]
+  boolean hasNext() throws FetchFailedException;
+
+  Pair<K, C> next() throws FetchFailedException;
+
 }

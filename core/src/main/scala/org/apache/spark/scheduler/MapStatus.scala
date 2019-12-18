@@ -25,6 +25,7 @@ import org.roaringbitmap.RoaringBitmap
 
 import org.apache.spark.SparkEnv
 import org.apache.spark.internal.config
+import org.apache.spark.shuffle.api.MapOutputMetadata
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.Utils
 
@@ -32,7 +33,7 @@ import org.apache.spark.util.Utils
  * Result returned by a ShuffleMapTask to a scheduler. Includes the block manager address that the
  * task ran on as well as the sizes of outputs for each reducer, for passing on to the reduce tasks.
  */
-private[spark] sealed trait MapStatus {
+private[spark] sealed trait MapStatus extends MapOutputMetadata {
   /** Location where this task was run. */
   def location: BlockManagerId
 

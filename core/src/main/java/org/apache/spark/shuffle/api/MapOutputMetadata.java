@@ -15,20 +15,18 @@
  * limitations under the License.
  */
 
-package org.apache.spark.shuffle
+package org.apache.spark.shuffle.api;
 
-import java.io.IOException
+import java.io.Serializable;
 
-import org.apache.spark.shuffle.api.MapOutputMetadata
+import org.apache.spark.annotation.Private;
 
 /**
- * Obtained inside a map task to write out records to the shuffle system.
+ * :: Private ::
+ * A tagging interface to mark the type representing the metadata of a shuffle map output. It
+ * intentionally does not define any fields or methods.
  */
-private[spark] abstract class ShuffleWriter[K, V] {
-  /** Write a sequence of records to this task's output */
-  @throws[IOException]
-  def write(records: Iterator[Product2[K, V]]): Unit
+@Private
+public interface MapOutputMetadata extends Serializable {
 
-  /** Close this writer, passing along whether the map completed */
-  def stop(success: Boolean): Option[MapOutputMetadata]
 }

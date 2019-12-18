@@ -17,6 +17,7 @@
 
 package org.apache.spark.shuffle.sort.io;
 
+import java.io.IOException;
 import java.util.Map;
 import java.util.Optional;
 
@@ -24,8 +25,11 @@ import com.google.common.annotations.VisibleForTesting;
 
 import org.apache.spark.SparkConf;
 import org.apache.spark.SparkEnv;
+import org.apache.spark.shuffle.api.FetchFailedException;
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents;
+import org.apache.spark.shuffle.api.ShuffleIterator;
 import org.apache.spark.shuffle.api.ShuffleMapOutputWriter;
+import org.apache.spark.shuffle.api.ShuffleMetadata;
 import org.apache.spark.shuffle.IndexShuffleBlockResolver;
 import org.apache.spark.shuffle.api.SingleSpillShuffleMapOutputWriter;
 import org.apache.spark.storage.BlockManager;
@@ -69,7 +73,8 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
           "Executor components must be initialized before getting writers.");
     }
     return new LocalDiskShuffleMapOutputWriter(
-        shuffleId, mapTaskId, numPartitions, blockResolver, sparkConf);
+        shuffleId, mapTaskId, numPartitions, blockManager.shuffleServerId(), blockResolver,
+        sparkConf);
   }
 
   @Override
@@ -82,4 +87,13 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
     }
     return Optional.of(new LocalDiskSingleSpillMapOutputWriter(shuffleId, mapId, blockResolver));
   }
+
+  @Override
+  public <K, C> ShuffleIterator<K, C> readShuffle(
+      int shuffleId,
+      int reduceId,
+      ShuffleMetadata metadata) throws IOException, FetchFailedException {
+    throw new UnsupportedOperationException();
+  }
+
 }

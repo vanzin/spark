@@ -39,6 +39,7 @@ import org.slf4j.LoggerFactory;
 import org.apache.spark.Partitioner;
 import org.apache.spark.ShuffleDependency;
 import org.apache.spark.SparkConf;
+import org.apache.spark.shuffle.api.MapOutputMetadata;
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents;
 import org.apache.spark.shuffle.api.ShuffleMapOutputWriter;
 import org.apache.spark.shuffle.api.ShufflePartitionWriter;
@@ -92,8 +93,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   /** Array of file writers, one for each partition */
   private DiskBlockObjectWriter[] partitionWriters;
   private FileSegment[] partitionWriterSegments;
-  @Nullable private MapStatus mapStatus;
-  private long[] partitionLengths;
+  @Nullable private MapOutputMetadata mapStatus;
 
   /**
    * Are we in the process of stopping? Because map tasks can call stop() with success = true
@@ -130,9 +130,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
         .createMapOutputWriter(shuffleId, mapId, numPartitions);
     try {
       if (!records.hasNext()) {
-        partitionLengths = mapOutputWriter.commitAllPartitions();
-        mapStatus = MapStatus$.MODULE$.apply(
-          blockManager.shuffleServerId(), partitionLengths, mapId);
+        mapStatus = mapOutputWriter.commitAllPartitions();
         return;
       }
       final SerializerInstance serInstance = serializer.newInstance();
@@ -164,9 +162,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
         }
       }
 
-      partitionLengths = writePartitionedData(mapOutputWriter);
-      mapStatus = MapStatus$.MODULE$.apply(
-        blockManager.shuffleServerId(), partitionLengths, mapId);
+      mapStatus = writePartitionedData(mapOutputWriter);
     } catch (Exception e) {
       try {
         mapOutputWriter.abort(e);
@@ -178,17 +174,13 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
     }
   }
 
-  @VisibleForTesting
-  long[] getPartitionLengths() {
-    return partitionLengths;
-  }
-
   /**
    * Concatenate all of the per-partition files into a single combined file.
    *
    * @return array of lengths, in bytes, of each partition of the file (used by map output tracker).
    */
-  private long[] writePartitionedData(ShuffleMapOutputWriter mapOutputWriter) throws IOException {
+  private MapOutputMetadata writePartitionedData(ShuffleMapOutputWriter mapOutputWriter)
+      throws IOException {
     // Track location of the partition starts in the output file
     if (partitionWriters != null) {
       final long writeStartTime = System.nanoTime();
@@ -259,7 +251,7 @@ final class BypassMergeSortShuffleWriter<K, V> extends ShuffleWriter<K, V> {
   }
 
   @Override
-  public Option<MapStatus> stop(boolean success) {
+  public Option<MapOutputMetadata> stop(boolean success) {
     if (stopping) {
       return None$.empty();
     } else {
