@@ -20,8 +20,6 @@ package org.apache.spark.shuffle.sort.io;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.locks.Lock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.function.Predicate;
 
 import com.google.common.base.Preconditions;
@@ -45,9 +43,6 @@ class LocalDiskShuffleMetadata implements ShuffleMetadata {
 
 class ShuffleStatus {
 
-  private final Lock readLock;
-  private final Lock writeLock;
-
   /**
    * MapStatus for each partition. The index of the array is the map partition id.
    * Each value in the array is the MapStatus for a partition, or null if the partition
@@ -66,9 +61,6 @@ class ShuffleStatus {
   private int numAvailableOutputs;
 
   ShuffleStatus(int numMaps) {
-    ReentrantReadWriteLock lock = new ReentrantReadWriteLock();
-    readLock = lock.readLock();
-    writeLock = lock.writeLock();
     statuses = new MapStatus[numMaps];
   }
 
@@ -79,17 +71,12 @@ class ShuffleStatus {
    * @return Whether the status was added to the internal list.
    */
   boolean addMapOutput(int mapIndex, MapStatus status) {
-    writeLock.lock();
-    try {
-      if (statuses[mapIndex] == null) {
-        numAvailableOutputs += 1;
-        statuses[mapIndex] = status;
-        return true;
-      }
-      return false;
-    } finally {
-      writeLock.unlock();
+    if (statuses[mapIndex] == null) {
+      numAvailableOutputs += 1;
+      statuses[mapIndex] = status;
+      return true;
     }
+    return false;
   }
 
   /**
@@ -100,17 +87,12 @@ class ShuffleStatus {
    * @return Whether the status was removed from the internal list.
    */
   boolean removeMapOutput(int mapIndex, BlockManagerId bmAddress) {
-    writeLock.lock();
-    try {
-      if (statuses[mapIndex] != null && statuses[mapIndex].location().equals(bmAddress)) {
-        numAvailableOutputs -= 1;
-        statuses[mapIndex] = null;
-        return true;
-      }
-      return false;
-    } finally {
-      writeLock.unlock();
+    if (statuses[mapIndex] != null && statuses[mapIndex].location().equals(bmAddress)) {
+      numAvailableOutputs -= 1;
+      statuses[mapIndex] = null;
+      return true;
     }
+    return false;
   }
 
   /**
@@ -139,36 +121,26 @@ class ShuffleStatus {
    * remove outputs which are served by an external shuffle server (if one exists).
    */
   boolean removeOutputsByFilter(Predicate<BlockManagerId> filter) {
-    writeLock.lock();
-    try {
-      boolean modified = false;
-      for (int i = 0; i < statuses.length; i ++) {
-        if (statuses[i] != null && filter.test(statuses[i].location())) {
-          numAvailableOutputs -= 1;
-          statuses[i] = null;
-          modified = true;
-        }
+    boolean modified = false;
+    for (int i = 0; i < statuses.length; i ++) {
+      if (statuses[i] != null && filter.test(statuses[i].location())) {
+        numAvailableOutputs -= 1;
+        statuses[i] = null;
+        modified = true;
       }
-      return modified;
-    } finally {
-      writeLock.unlock();
     }
+    return modified;
   }
 
   boolean invalidate() {
-    writeLock.lock();
-    try {
-      if (numAvailableOutputs > 0) {
-        for (int i = 0; i < statuses.length; i++) {
-          statuses[i] = null;
-        }
-        numAvailableOutputs = 0;
-        return true;
-      } else {
-        return false;
+    if (numAvailableOutputs > 0) {
+      for (int i = 0; i < statuses.length; i++) {
+        statuses[i] = null;
       }
-    } finally {
-      writeLock.unlock();
+      numAvailableOutputs = 0;
+      return true;
+    } else {
+      return false;
     }
   }
 
@@ -176,39 +148,26 @@ class ShuffleStatus {
    * Number of partitions that have shuffle outputs.
    */
   int numAvailableOutputs() {
-    readLock.lock();
-    try {
-      return numAvailableOutputs;
-    } finally {
-      readLock.unlock();
-    }
+    return numAvailableOutputs;
   }
 
   /**
    * Returns the sequence of partition ids that are missing (i.e. needs to be computed).
    */
   int[] findMissingPartitions() {
-    readLock.lock();
-    try {
-      int[] missing = new int[statuses.length - numAvailableOutputs];
-      int midx = 0;
-      for (int i = 0; i < statuses.length; i++) {
-        if (statuses[i] == null) {
-          Preconditions.checkState(midx < missing.length,
-            "Expected %s missing, but found more.", missing.length);
-          missing[midx] = i;
-          midx++;
-        }
+    int[] missing = new int[statuses.length - numAvailableOutputs];
+    int midx = 0;
+    for (int i = 0; i < statuses.length; i++) {
+      if (statuses[i] == null) {
+        Preconditions.checkState(midx < missing.length,
+          "Expected %s missing, but found more.", missing.length);
+        missing[midx] = i;
+        midx++;
       }
-      return missing;
-    } finally {
-      readLock.unlock();
     }
+    return missing;
   }
 
-  // TODO: this isn't thread safe since another thread might modify the returned array while the
-  // caller may be processing it. But as far as I can see, that race exists in the current master
-  // MapOutputTracker anyway.
   LocalDiskShuffleMetadata toMetadata() {
     return new LocalDiskShuffleMetadata(statuses);
   }
