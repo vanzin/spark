@@ -17,6 +17,7 @@
 
 package org.apache.spark.shuffle.sort
 
+import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
 
 import scala.collection.JavaConverters._
@@ -24,7 +25,7 @@ import scala.collection.JavaConverters._
 import org.apache.spark._
 import org.apache.spark.internal.{config, Logging}
 import org.apache.spark.shuffle._
-import org.apache.spark.shuffle.api.{Pair, ShuffleDataIO, ShuffleExecutorComponents}
+import org.apache.spark.shuffle.api.{ShuffleDataIO, ShuffleExecutorComponents}
 import org.apache.spark.util.Utils
 import org.apache.spark.util.collection.OpenHashSet
 
@@ -127,7 +128,7 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
     val shuffleMetadata = java.util.Optional.ofNullable(
       SparkEnv.get.mapOutputTracker.getShuffleMetadata(handle.shuffleId).orNull)
     val shuffleStreams = shuffleExecutorComponents.readShuffle(handle.shuffleId,
-      startPartition, endPartition, shuffleMetadata)
+      startPartition, endPartition, shuffleMetadata, Optional.empty())
     new BlockStoreShuffleReader(
       handle.asInstanceOf[BaseShuffleHandle[K, _, C]], shuffleStreams.asScala, context, metrics,
       shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
@@ -140,16 +141,13 @@ private[spark] class SortShuffleManager(conf: SparkConf) extends ShuffleManager 
       endPartition: Int,
       context: TaskContext,
       metrics: ShuffleReadMetricsReporter): ShuffleReader[K, C] = {
-    /*
-    TODO
-
-    val blocksByAddress = SparkEnv.get.mapOutputTracker.getMapSizesByMapIndex(
-      handle.shuffleId, mapIndex, startPartition, endPartition)
+    val shuffleMetadata = java.util.Optional.ofNullable(
+      SparkEnv.get.mapOutputTracker.getShuffleMetadata(handle.shuffleId).orNull)
+    val shuffleStreams = shuffleExecutorComponents.readShuffle(handle.shuffleId,
+      startPartition, endPartition, shuffleMetadata, Optional.of(mapIndex))
     new BlockStoreShuffleReader(
-      handle.asInstanceOf[BaseShuffleHandle[K, _, C]], blocksByAddress, context, metrics,
+      handle.asInstanceOf[BaseShuffleHandle[K, _, C]], shuffleStreams.asScala, context, metrics,
       shouldBatchFetch = canUseBatchFetch(startPartition, endPartition, context))
-    */
-    throw new UnsupportedOperationException()
   }
 
   /** Get a writer for a given partition. Called on executors by map tasks. */

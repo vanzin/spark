@@ -105,7 +105,8 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
       int shuffleId,
       int startPartition,
       int endPartition,
-      Optional<ShuffleMetadata> metadata) throws IOException, FetchFailedException {
+      Optional<ShuffleMetadata> metadata,
+      Optional<Integer> mapIndex) throws IOException, FetchFailedException {
     // XXX: This is ugly. Perhaps should be in Scala.
 
     LocalDiskShuffleMetadata localMetadata = (LocalDiskShuffleMetadata) metadata.get();
@@ -115,7 +116,7 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
       blockManager.blockStoreClient(),
       blockManager,
       MapOutputTracker.convertMapStatuses(shuffleId, startPartition, endPartition,
-        localMetadata.statuses, scala.Option.apply(null)),
+        localMetadata.statuses, scala.Option.apply(mapIndex.orElse(null))),
       // XXX. this should come from the shuffle dep, but that's not available here.
       serializerManager::wrapStream,
       ((long) sparkConf.get(MODULE$.REDUCER_MAX_SIZE_IN_FLIGHT()) * 1024 * 1024),
@@ -141,5 +142,4 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
 
     };
   }
-
 }

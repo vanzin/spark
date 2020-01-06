@@ -82,7 +82,7 @@ public interface ShuffleExecutorComponents {
       int shuffleId,
       int startPartition,
       int endPartition,
-      Optional<ShuffleMetadata> metadata)
+      Optional<ShuffleMetadata> metadata,
+      Optional<Integer> mapIndex)
     throws IOException, FetchFailedException;
-
 }

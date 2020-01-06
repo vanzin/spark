@@ -109,37 +109,6 @@ private[spark] abstract class MapOutputTracker(conf: SparkConf) extends Logging 
         "Error reply received from MapOutputTracker. Expecting true, got " + response.toString)
     }
   }
-
-  /**
-   * Called from executors to get the server URIs and output sizes for each shuffle block that
-   * needs to be read from a given range of map output partitions (startPartition is included but
-   * endPartition is excluded from the range).
-   *
-   * @return A sequence of 2-item tuples, where the first item in the tuple is a BlockManagerId,
-   *         and the second item is a sequence of (shuffle block id, shuffle block size, map index)
-   *         tuples describing the shuffle blocks that are stored at that block manager.
-   */
-  def getMapSizesByExecutorId(
-      shuffleId: Int,
-      startPartition: Int,
-      endPartition: Int)
-  : Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])]
-
-  /**
-   * Called from executors to get the server URIs and output sizes for each shuffle block that
-   * needs to be read from a given range of map output partitions (startPartition is included but
-   * endPartition is excluded from the range) and is produced by a specific mapper.
-   *
-   * @return A sequence of 2-item tuples, where the first item in the tuple is a BlockManagerId,
-   *         and the second item is a sequence of (shuffle block id, shuffle block size, map index)
-   *         tuples describing the shuffle blocks that are stored at that block manager.
-   */
-  def getMapSizesByMapIndex(
-      shuffleId: Int,
-      mapIndex: Int,
-      startPartition: Int,
-      endPartition: Int): Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])]
-
   /**
    * Deletes map output status information for the specified shuffle stage.
    */
@@ -577,55 +546,6 @@ private[spark] class MapOutputTrackerMaster(
     }
   }
 
-  // Get blocks sizes by executor Id. Note that zero-sized blocks are excluded in the result.
-  // This method is only called in local-mode.
-  def getMapSizesByExecutorId(
-      shuffleId: Int,
-      startPartition: Int,
-      endPartition: Int)
-  : Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])] = {
-    /*
-    TODO: this needs to be in the local disk plugin implementation (see SortShuffleManager).
-    logDebug(s"Fetching outputs for shuffle $shuffleId, partitions $startPartition-$endPartition")
-    shuffleStatuses.get(shuffleId) match {
-      case Some (shuffleStatus) =>
-        shuffleStatus.withMapStatuses { statuses =>
-          MapOutputTracker.convertMapStatuses(
-            shuffleId, startPartition, endPartition, statuses)
-        }
-      case None =>
-        Iterator.empty
-    }
-    */
-    Iterator.empty
-  }
-
-  override def getMapSizesByMapIndex(
-      shuffleId: Int,
-      mapIndex: Int,
-      startPartition: Int,
-      endPartition: Int): Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])] = {
-    /*
-    TODO: this needs to be in the local disk plugin implementation (see SortShuffleManager).
-    logDebug(s"Fetching outputs for shuffle $shuffleId, mapIndex $mapIndex" +
-      s"partitions $startPartition-$endPartition")
-    shuffleStatuses.get(shuffleId) match {
-      case Some (shuffleStatus) =>
-        shuffleStatus.withMapStatuses { statuses =>
-          MapOutputTracker.convertMapStatuses(
-            shuffleId,
-            startPartition,
-            endPartition,
-            statuses,
-            Some(mapIndex))
-        }
-      case None =>
-        Iterator.empty
-    }
-    */
-    Iterator.empty
-  }
-
   override def stop(): Unit = {
     mapOutputRequests.offer(PoisonPill)
     threadpool.shutdown()
@@ -656,54 +576,6 @@ private[spark] class MapOutputTrackerWorker(conf: SparkConf) extends MapOutputTr
    * the same shuffle block.
    */
   private val fetchingLock = new KeyLock[Int]
-
-  // Get blocks sizes by executor Id. Note that zero-sized blocks are excluded in the result.
-  override def getMapSizesByExecutorId(
-      shuffleId: Int,
-      startPartition: Int,
-      endPartition: Int)
-    : Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])] = {
-    /*
-    TODO: probably should be in the local disk plugin.?
-    logDebug(s"Fetching outputs for shuffle $shuffleId, partitions $startPartition-$endPartition")
-    val statuses = getStatuses(shuffleId, conf)
-    try {
-      MapOutputTracker.convertMapStatuses(
-        shuffleId, startPartition, endPartition, statuses)
-    } catch {
-      case e: MetadataFetchFailedException =>
-        // We experienced a fetch failure so our mapStatuses cache is outdated; clear it:
-        mapStatuses.clear()
-        throw e
-    }
-    */
-    Iterator.empty
-  }
-
-  override def getMapSizesByMapIndex(
-      shuffleId: Int,
-      mapIndex: Int,
-      startPartition: Int,
-      endPartition: Int): Iterator[(BlockManagerId, Seq[(BlockId, Long, Int)])] = {
-    /*
-    TODO: probably should be in the local disk plugin? Used by getReaderForOneMapper which seems
-    to be used only by LocalShuffleRowRDD.
-
-    logDebug(s"Fetching outputs for shuffle $shuffleId, mapIndex $mapIndex" +
-      s"partitions $startPartition-$endPartition")
-    val statuses = getStatuses(shuffleId, conf)
-    try {
-      MapOutputTracker.convertMapStatuses(shuffleId, startPartition, endPartition,
-        statuses, Some(mapIndex))
-    } catch {
-      case e: MetadataFetchFailedException =>
-        // We experienced a fetch failure so our mapStatuses cache is outdated; clear it:
-        mapStatuses.clear()
-        throw e
-    }
-    */
-    Iterator.empty
-  }
 
   /**
    * Get or fetch the array of MapStatuses for a given shuffle ID. NOTE: clients MUST synchronize
