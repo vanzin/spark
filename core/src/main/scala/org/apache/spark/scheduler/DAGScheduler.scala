@@ -1083,7 +1083,7 @@ private[spark] class DAGScheduler(
 
     // If the whole stage has already finished, tell the listener and remove it
     if (finalStage.isAvailable) {
-      markMapStageJobAsFinished(job, mapOutputTracker.getStatistics(dependency))
+      markMapStageJobAsFinished(job)
     }
   }
 
@@ -1811,9 +1811,8 @@ private[spark] class DAGScheduler(
   private[scheduler] def markMapStageJobsAsFinished(shuffleStage: ShuffleMapStage): Unit = {
     // Mark any map-stage jobs waiting on this stage as finished
     if (shuffleStage.isAvailable && shuffleStage.mapStageJobs.nonEmpty) {
-      val stats = mapOutputTracker.getStatistics(shuffleStage.shuffleDep)
       for (job <- shuffleStage.mapStageJobs) {
-        markMapStageJobAsFinished(job, stats)
+        markMapStageJobAsFinished(job)
       }
     }
   }
@@ -2122,12 +2121,12 @@ private[spark] class DAGScheduler(
   }
 
   /** Mark a map stage job as finished with the given output stats, and report to its listener. */
-  def markMapStageJobAsFinished(job: ActiveJob, stats: MapOutputStatistics): Unit = {
+  def markMapStageJobAsFinished(job: ActiveJob): Unit = {
     // In map stage jobs, we only create a single "task", which is to finish all of the stage
     // (including reusing any previous map outputs, etc); so we just mark task 0 as done
     job.finished(0) = true
     job.numFinished += 1
-    job.listener.taskSucceeded(0, stats)
+    job.listener.taskSucceeded(0, null)
     cleanupStateForJobAndIndependentStages(job)
     listenerBus.post(SparkListenerJobEnd(job.jobId, clock.getTimeMillis(), JobSucceeded))
   }
