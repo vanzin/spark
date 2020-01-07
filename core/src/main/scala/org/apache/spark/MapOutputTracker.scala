@@ -188,10 +188,10 @@ private[spark] class MapOutputTrackerMaster(
     var data = state.withReadLock(_.serialized)
 
     if (data == null) {
-      val metadata = outputTracker.flatMap { ot =>
-        Option(ot.shuffleMetadata(shuffleId).orElse(null))
-      }
       val (newData, bcast, statusEpoch) = state.withReadLock { _ =>
+        val metadata = outputTracker.flatMap { ot =>
+          Option(ot.shuffleMetadata(shuffleId).orElse(null))
+        }
         val (_data, _bcast) = MapOutputTracker.serializeMapStatuses(metadata, broadcastManager,
           isLocal, minSizeForBroadcast, conf)
         (_data, _bcast, getEpoch)
