@@ -151,11 +151,6 @@ private[spark] class MapOutputTrackerMaster(
   // NOTE: This should be less than 2000 as we use HighlyCompressedMapStatus beyond that
   private val SHUFFLE_PREF_REDUCE_THRESHOLD = 1000
 
-  // Fraction of total map output that must be at a location for it to considered as a preferred
-  // location for a reduce task. Making this larger will focus on fewer locations where most data
-  // can be read locally, but may lead to more delay in scheduling if those locations are busy.
-  private val REDUCER_PREF_LOCS_FRACTION = 0.2
-
   private val maxRpcMessageSize = RpcUtils.maxMessageSizeBytes(conf)
 
   // requests for map output statuses
@@ -384,81 +379,16 @@ private[spark] class MapOutputTrackerMaster(
    */
   def getPreferredLocationsForShuffle(dep: ShuffleDependency[_, _, _], partitionId: Int)
       : Seq[String] = {
-    Nil
-    /*
-    TODO: need to abstract this through the plugin interface. Maybe.
-
-    if (shuffleLocalityEnabled && dep.rdd.partitions.length < SHUFFLE_PREF_MAP_THRESHOLD &&
-        dep.partitioner.numPartitions < SHUFFLE_PREF_REDUCE_THRESHOLD) {
-      val blockManagerIds = getLocationsWithLargestOutputs(dep.shuffleId, partitionId,
-        dep.partitioner.numPartitions, REDUCER_PREF_LOCS_FRACTION)
-      if (blockManagerIds.nonEmpty) {
-        blockManagerIds.get.map(_.host)
+    outputTracker.toSeq.flatMap { ot =>
+      val sstate = knownShuffles.get(dep.shuffleId)
+      if (sstate != null) {
+        sstate.withReadLock { _ =>
+          ot.preferredLocations(dep.shuffleId, partitionId, false).asScala
+        }
       } else {
         Nil
       }
-    } else {
-      Nil
     }
-    */
-  }
-
-  /**
-   * Return a list of locations that each have fraction of map output greater than the specified
-   * threshold.
-   *
-   * @param shuffleId id of the shuffle
-   * @param reducerId id of the reduce task
-   * @param numReducers total number of reducers in the shuffle
-   * @param fractionThreshold fraction of total map output size that a location must have
-   *                          for it to be considered large.
-   */
-  def getLocationsWithLargestOutputs(
-      shuffleId: Int,
-      reducerId: Int,
-      numReducers: Int,
-      fractionThreshold: Double)
-    : Option[Array[BlockManagerId]] = {
-
-    /*
-    TODO: need to abstract this through the plugin interface. Maybe.
-
-    val shuffleStatus = shuffleStatuses.get(shuffleId).orNull
-    if (shuffleStatus != null) {
-      shuffleStatus.withMapStatuses { statuses =>
-        if (statuses.nonEmpty) {
-          // HashMap to add up sizes of all blocks at the same location
-          val locs = new HashMap[BlockManagerId, Long]
-          var totalOutputSize = 0L
-          var mapIdx = 0
-          while (mapIdx < statuses.length) {
-            val status = statuses(mapIdx)
-            // status may be null here if we are called between registerShuffle, which creates an
-            // array with null entries for each output, and registerMapOutputs, which populates it
-            // with valid status entries. This is possible if one thread schedules a job which
-            // depends on an RDD which is currently being computed by another thread.
-            if (status != null) {
-              val blockSize = status.getSizeForBlock(reducerId)
-              if (blockSize > 0) {
-                locs(status.location) = locs.getOrElse(status.location, 0L) + blockSize
-                totalOutputSize += blockSize
-              }
-            }
-            mapIdx = mapIdx + 1
-          }
-          val topLocs = locs.filter { case (loc, size) =>
-            size.toDouble / totalOutputSize >= fractionThreshold
-          }
-          // Return if we have any locations which satisfy the required threshold
-          if (topLocs.nonEmpty) {
-            return Some(topLocs.keys.toArray)
-          }
-        }
-      }
-    }
-    */
-
-    None
   }
 
   /**
@@ -471,24 +401,16 @@ private[spark] class MapOutputTrackerMaster(
    */
   def getMapLocation(dep: ShuffleDependency[_, _, _], mapId: Int): Seq[String] =
   {
-    Nil
-    /*
-    TODO: very specific to LocalShuffleRowRDD. Maybe abstract through plugin API, maybe hardcode
-    in local disk implementation, who knows...
-
-    val shuffleStatus = shuffleStatuses.get(dep.shuffleId).orNull
-    if (shuffleStatus != null) {
-      shuffleStatus.withMapStatuses { statuses =>
-        if (mapId >= 0 && mapId < statuses.length) {
-          Seq(statuses(mapId).location.host)
-        } else {
-          Nil
+    outputTracker.toSeq.flatMap { ot =>
+      val sstate = knownShuffles.get(dep.shuffleId)
+      if (sstate != null) {
+        sstate.withReadLock { _ =>
+          ot.preferredLocations(dep.shuffleId, mapId, true).asScala
         }
+      } else {
+        Nil
       }
-    } else {
-      Nil
     }
-    */
   }
 
   def incrementEpoch(): Unit = {

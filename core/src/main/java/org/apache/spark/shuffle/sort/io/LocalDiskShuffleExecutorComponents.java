@@ -19,7 +19,9 @@ package org.apache.spark.shuffle.sort.io;
 
 import java.io.InputStream;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 

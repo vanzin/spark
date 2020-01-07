@@ -17,6 +17,7 @@
 
 package org.apache.spark.shuffle.api;
 
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -57,4 +58,10 @@ public interface ShuffleOutputTracker {
   // metadata for a specific shuffle.
   Optional<ShuffleMetadata> shuffleMetadata(int shuffleId);
 
+  // Preferred locations for the given shuffle. Caller can query preferred locations based on
+  // either partition or mapper index.
+  List<String> preferredLocations(
+      int shuffleId,
+      int mapperOrPartitionId,
+      boolean isMapper);
 }

@@ -17,7 +17,11 @@
 
 package org.apache.spark.shuffle.sort.io;
 
+import java.util.Arrays;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Predicate;
@@ -168,6 +172,14 @@ class ShuffleStatus {
     return missing;
   }
 
+  MapStatus mapStatus(int mapperIndex) {
+    return statuses[mapperIndex];
+  }
+
+  int mapperCount() {
+    return statuses.length;
+  }
+
   LocalDiskShuffleMetadata toMetadata() {
     return new LocalDiskShuffleMetadata(statuses);
   }
@@ -219,6 +231,58 @@ class LocalDiskOutputTracker implements ShuffleOutputTracker {
   public Optional<ShuffleMetadata> shuffleMetadata(int shuffleId) {
     ShuffleStatus shuffle = shuffles.get(shuffleId);
     return Optional.ofNullable(shuffle != null ? shuffle.toMetadata() : null);
+  }
+
+  @Override
+  public List<String> preferredLocations(
+      int shuffleId,
+      int mapperOrPartitionId,
+      boolean isMapper) {
+    ShuffleStatus shuffle = shuffles.get(shuffleId);
+    if (shuffle == null) {
+      return Collections.emptyList();
+    }
+
+    if (isMapper) {
+      if (mapperOrPartitionId > 0 && mapperOrPartitionId < shuffle.mapperCount()) {
+        MapStatus m = shuffle.mapStatus(mapperOrPartitionId);
+        return Arrays.asList(m.location().host());
+      } else {
+        return Collections.emptyList();
+      }
+    }
+
+    // Fraction of total map output that must be at a location for it to considered as a preferred
+    // location for a reduce task. Making this larger will focus on fewer locations where most data
+    // can be read locally, but may lead to more delay in scheduling if those locations are busy.
+    final double REDUCER_PREF_LOCS_FRACTION = 0.2;
+
+    Map<BlockManagerId, Long> locs = new HashMap<>();
+    long totalOutputSize = 0L;
+    for (int mapIdx = 0; mapIdx < shuffle.mapperCount(); mapIdx++) {
+      MapStatus status = shuffle.mapStatus(mapIdx);
+      // status may be null here if we are called between registerShuffle, which creates an
+      // array with null entries for each output, and registerMapOutputs, which populates it
+      // with valid status entries. This is possible if one thread schedules a job which
+      // depends on an RDD which is currently being computed by another thread.
+      if (status != null) {
+        long blockSize = status.getSizeForBlock(mapperOrPartitionId);
+        if (blockSize > 0) {
+          Long previous = locs.get(status.location());
+          Long updated = previous != null ? previous + blockSize : blockSize;
+          locs.put(status.location(), updated);
+          totalOutputSize += blockSize;
+        }
+      }
+    }
+
+    List<String> topLocs = new ArrayList<>();
+    for (Map.Entry<BlockManagerId, Long> e : locs.entrySet()) {
+      if (1.0d * e.getValue() / totalOutputSize >= REDUCER_PREF_LOCS_FRACTION) {
+        topLocs.add(e.getKey().host());
+      }
+    }
+    return topLocs;
   }
 
   private ShuffleStatus shuffle(int shuffleId) {
