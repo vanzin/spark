@@ -1519,7 +1519,7 @@ private[spark] class DAGScheduler(
             }
         }
 
-      case FetchFailed(bmAddress, shuffleId, _, mapIndex, reduceId, failureMessage) =>
+      case FetchFailed(shuffleId, mapIndex, metadata, failureMessage) =>
         val failedStage = stageIdToStage(task.stageId)
         val mapStage = shuffleIdToMapStage(shuffleId)
 
@@ -1552,8 +1552,7 @@ private[spark] class DAGScheduler(
             mapOutputTracker.unregisterAllMapOutput(shuffleId)
           } else if (mapIndex != -1) {
             // Mark the map whose fetch failed as broken in the map stage
-            // TODO: fill in the block metadata from the exception
-            mapOutputTracker.handleFetchFailure(shuffleId, null /* metadata goes here */)
+            mapOutputTracker.handleFetchFailure(shuffleId, metadata)
           }
 
           if (failedStage.rdd.isBarrier()) {
@@ -1678,6 +1677,8 @@ private[spark] class DAGScheduler(
           }
 
           // TODO: mark the executor as failed only if there were lots of fetch failures on it
+          // TODO: see what to do with this when we're using a shuffle plugin.
+          /*
           if (bmAddress != null) {
             val hostToUnregisterOutputs = if (env.blockManager.externalShuffleServiceEnabled &&
               unRegisterOutputOnHostOnFetchFailure) {
@@ -1695,6 +1696,7 @@ private[spark] class DAGScheduler(
               hostToUnregisterOutputs = hostToUnregisterOutputs,
               maybeEpoch = Some(task.epoch))
           }
+          */
         }
 
       case failure: TaskFailedReason if task.isBarrier =>

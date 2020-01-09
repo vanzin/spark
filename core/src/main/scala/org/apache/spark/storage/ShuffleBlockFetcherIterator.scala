@@ -620,7 +620,7 @@ final class ShuffleBlockFetcherIterator(
             // since the last call.
             val msg = s"Received a zero-size buffer for block $blockId from $address " +
               s"(expectedApproxSize = $size, isNetworkReqDone=$isNetworkReqDone)"
-            throwFetchFailedException(blockId, mapIndex, address, new IOException(msg))
+            throwFetchFailedException(blockMetadata(blockId, mapIndex), new IOException(msg))
           }
 
           val in = try {
@@ -636,7 +636,7 @@ final class ShuffleBlockFetcherIterator(
                 case e: IOException => logError("Failed to create input stream from local block", e)
               }
               buf.release()
-              throwFetchFailedException(blockId, mapIndex, address, e)
+              throwFetchFailedException(blockMetadata(blockId, mapIndex), e)
           }
           try {
             input = streamWrapper.apply(blockId, in)
@@ -654,7 +654,7 @@ final class ShuffleBlockFetcherIterator(
               buf.release()
               if (buf.isInstanceOf[FileSegmentManagedBuffer]
                   || corruptedBlocks.contains(blockId)) {
-                throwFetchFailedException(blockId, mapIndex, address, e)
+                throwFetchFailedException(blockMetadata(blockId, mapIndex), e)
               } else {
                 logWarning(s"got an corrupted block $blockId from $address, fetch again", e)
                 corruptedBlocks += blockId
@@ -672,7 +672,7 @@ final class ShuffleBlockFetcherIterator(
           }
 
         case FailureFetchResult(blockId, mapIndex, address, e) =>
-          throwFetchFailedException(blockId, mapIndex, address, e)
+          throwFetchFailedException(blockMetadata(blockId, mapIndex), e)
       }
 
       // Send fetch requests up to maxBytesInFlight
@@ -750,19 +750,21 @@ final class ShuffleBlockFetcherIterator(
   }
 
   private[storage] def throwFetchFailedException(
-      blockId: BlockId,
-      mapIndex: Int,
-      address: BlockManagerId,
+      metadata: LocalShuffleBlockMetadata,
       e: Throwable) = {
-    blockId match {
-      case ShuffleBlockId(shufId, mapId, reduceId) =>
-        throw new FetchFailedException(address, shufId, mapId, mapIndex, reduceId, e)
-      case ShuffleBlockBatchId(shuffleId, mapId, startReduceId, _) =>
-        throw new FetchFailedException(address, shuffleId, mapId, mapIndex, startReduceId, e)
+    metadata.blockId match {
+      case ShuffleBlockId(shufId, _, _) =>
+        throw new FetchFailedException(shufId, metadata.mapIndex, metadata, e.getMessage(), e)
+      case ShuffleBlockBatchId(shuffleId, _, _, _) =>
+        throw new FetchFailedException(shuffleId, metadata.mapIndex, metadata, e.getMessage(), e)
       case _ =>
         throw new SparkException(
-          "Failed to get block " + blockId + ", which is not a shuffle block", e)
+          "Failed to get block " + metadata.blockId + ", which is not a shuffle block", e)
     }
+  }
+
+  private[storage] def blockMetadata(blockId: BlockId, mapIndex: Int): LocalShuffleBlockMetadata = {
+    new LocalShuffleBlockMetadata(blockId, mapIndex)
   }
 }
 
@@ -781,13 +783,15 @@ private class BufferReleasingInputStream(
   extends ShuffleInputStream {
   private[this] var closed = false
 
+  private val metadata = iterator.blockMetadata(blockId, mapIndex)
+
   override def read(): Int = {
     try {
       delegate.read()
     } catch {
       case e: IOException if detectCorruption =>
         IOUtils.closeQuietly(this)
-        iterator.throwFetchFailedException(blockId, mapIndex, address, e)
+        iterator.throwFetchFailedException(metadata, e)
     }
   }
 
@@ -809,7 +813,7 @@ private class BufferReleasingInputStream(
     } catch {
       case e: IOException if detectCorruption =>
         IOUtils.closeQuietly(this)
-        iterator.throwFetchFailedException(blockId, mapIndex, address, e)
+        iterator.throwFetchFailedException(metadata, e)
     }
   }
 
@@ -821,7 +825,7 @@ private class BufferReleasingInputStream(
     } catch {
       case e: IOException if detectCorruption =>
         IOUtils.closeQuietly(this)
-        iterator.throwFetchFailedException(blockId, mapIndex, address, e)
+        iterator.throwFetchFailedException(metadata, e)
     }
   }
 
@@ -831,15 +835,13 @@ private class BufferReleasingInputStream(
     } catch {
       case e: IOException if detectCorruption =>
         IOUtils.closeQuietly(this)
-        iterator.throwFetchFailedException(blockId, mapIndex, address, e)
+        iterator.throwFetchFailedException(metadata, e)
     }
   }
 
   override def reset(): Unit = delegate.reset()
 
-  override def blockMetadata(): ShuffleBlockMetadata = {
-    new LocalShuffleBlockMetadata(blockId, mapIndex)
-  }
+  override def blockMetadata(): ShuffleBlockMetadata = metadata
 }
 
 /**

@@ -787,10 +787,13 @@ private[spark] class TaskSetManager(
         }
         isZombie = true
 
+        // TODO: need to figure out what to do here when using a shuffle plugin.
+        /*
         if (fetchFailed.bmAddress != null) {
           blacklistTracker.foreach(_.updateBlacklistForFetchFailure(
             fetchFailed.bmAddress.host, fetchFailed.bmAddress.executorId))
         }
+        */
 
         None
 

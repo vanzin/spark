@@ -18,6 +18,7 @@
 package org.apache.spark.shuffle
 
 import org.apache.spark.{FetchFailed, TaskContext, TaskFailedReason}
+import org.apache.spark.shuffle.api.ShuffleBlockMetadata
 import org.apache.spark.storage.BlockManagerId
 import org.apache.spark.util.Utils
 
@@ -33,24 +34,12 @@ import org.apache.spark.util.Utils
  * (or risk triggering any other exceptions).  See SPARK-19276.
  */
 private[spark] class FetchFailedException(
-    bmAddress: BlockManagerId,
     shuffleId: Int,
-    mapId: Long,
     mapIndex: Int,
-    reduceId: Int,
+    val metadata: ShuffleBlockMetadata,
     message: String,
     cause: Throwable = null)
   extends Exception(message, cause) {
-
-  def this(
-      bmAddress: BlockManagerId,
-      shuffleId: Int,
-      mapTaskId: Long,
-      mapIndex: Int,
-      reduceId: Int,
-      cause: Throwable) {
-    this(bmAddress, shuffleId, mapTaskId, mapIndex, reduceId, cause.getMessage, cause)
-  }
 
   // SPARK-19276. We set the fetch failure in the task context, so that even if there is user-code
   // which intercepts this exception (possibly wrapping it), the Executor can still tell there was
@@ -58,8 +47,9 @@ private[spark] class FetchFailedException(
   // because the TaskContext is not defined in some test cases.
   Option(TaskContext.get()).map(_.setFetchFailed(this))
 
-  def toTaskFailedReason: TaskFailedReason = FetchFailed(
-    bmAddress, shuffleId, mapId, mapIndex, reduceId, Utils.exceptionString(this))
+  def toTaskFailedReason: TaskFailedReason = {
+    FetchFailed(shuffleId, mapIndex, metadata, Utils.exceptionString(this))
+  }
 }
 
 /**
@@ -69,4 +59,4 @@ private[spark] class MetadataFetchFailedException(
     shuffleId: Int,
     reduceId: Int,
     message: String)
-  extends FetchFailedException(null, shuffleId, -1L, -1, reduceId, message)
+  extends FetchFailedException(shuffleId, -1, null, message)
