@@ -29,7 +29,6 @@ import java.util.function.Predicate;
 import com.google.common.base.Preconditions;
 
 import org.apache.spark.scheduler.MapStatus;
-import org.apache.spark.shuffle.api.FetchFailedException;
 import org.apache.spark.shuffle.api.MapOutputMetadata;
 import org.apache.spark.shuffle.api.ShuffleMetadata;
 import org.apache.spark.shuffle.api.ShuffleOutputTracker;
@@ -202,8 +201,14 @@ class LocalDiskOutputTracker implements ShuffleOutputTracker {
   }
 
   @Override
-  public boolean handleFetchFailure(FetchFailedException e) {
-    throw new UnsupportedOperationException();
+  public void handleFetchFailure(
+      int shuffleId,
+      int mapIndex,
+      int reduceId) {
+    // TODO: what is currently done in DAGScheduler.
+    // - unregister the output
+    // - potentially unregister all outputs on the host holding that shuffle data
+    // - ?
   }
 
   @Override

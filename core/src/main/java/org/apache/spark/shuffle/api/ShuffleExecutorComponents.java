@@ -84,5 +84,5 @@ public interface ShuffleExecutorComponents {
       int endPartition,
       Optional<ShuffleMetadata> metadata,
       Optional<Integer> mapIndex)
-    throws IOException, FetchFailedException;
+    throws IOException;
 }

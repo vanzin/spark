@@ -267,8 +267,10 @@ private[spark] class MapOutputTrackerMaster(
   }
 
   /** Unregister map output information of the given shuffle, mapper and block manager */
-  def unregisterMapOutput(shuffleId: Int, mapIndex: Int, bmAddress: BlockManagerId): Unit = {
-    logError(s"Need to implement proper fetch failure support.")
+  def handleFetchFailure(shuffleId: Int, mapIndex: Int, reduceId: Int): Unit = {
+    outputTracker.foreach { ot =>
+      ot.handleFetchFailure(shuffleId, mapIndex, reduceId)
+    }
   }
 
   /** Unregister all map output information of the given shuffle. */

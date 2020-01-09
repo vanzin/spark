@@ -33,7 +33,6 @@ import org.apache.spark.SparkEnv;
 import org.apache.spark.TaskContext;
 import org.apache.spark.serializer.SerializerManager;
 import org.apache.spark.shuffle.BlockStoreShuffleReader;
-import org.apache.spark.shuffle.api.FetchFailedException;
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents;
 import org.apache.spark.shuffle.api.ShuffleMapOutputWriter;
 import org.apache.spark.shuffle.api.ShuffleMetadata;
@@ -108,7 +107,7 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
       int startPartition,
       int endPartition,
       Optional<ShuffleMetadata> metadata,
-      Optional<Integer> mapIndex) throws IOException, FetchFailedException {
+      Optional<Integer> mapIndex) throws IOException {
     // XXX: This is ugly. Perhaps should be in Scala.
 
     LocalDiskShuffleMetadata localMetadata = (LocalDiskShuffleMetadata) metadata.get();
