@@ -30,8 +30,10 @@ import com.google.common.base.Preconditions;
 
 import org.apache.spark.scheduler.MapStatus;
 import org.apache.spark.shuffle.api.MapOutputMetadata;
+import org.apache.spark.shuffle.api.ShuffleBlockMetadata;
 import org.apache.spark.shuffle.api.ShuffleMetadata;
 import org.apache.spark.shuffle.api.ShuffleOutputTracker;
+import org.apache.spark.storage.BlockId;
 import org.apache.spark.storage.BlockManagerId;
 
 class LocalDiskShuffleMetadata implements ShuffleMetadata {
@@ -203,8 +205,8 @@ class LocalDiskOutputTracker implements ShuffleOutputTracker {
   @Override
   public void handleFetchFailure(
       int shuffleId,
-      int mapIndex,
-      int reduceId) {
+      ShuffleBlockMetadata block) {
+    BlockId blockId = ((LocalShuffleBlockMetadata) block).blockId;
     // TODO: what is currently done in DAGScheduler.
     // - unregister the output
     // - potentially unregister all outputs on the host holding that shuffle data

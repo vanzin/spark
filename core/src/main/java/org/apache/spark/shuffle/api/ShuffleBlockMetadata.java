@@ -17,15 +17,16 @@
 
 package org.apache.spark.shuffle.api;
 
-import java.util.Map;
+import java.io.Serializable;
 
 import org.apache.spark.annotation.Private;
 
 /**
  * :: Private ::
+ * A tagging interface to mark the plugin-specific metadata related to a shuffle input stream.
+ * This is used to identify the source of fetch failures when performing error handling.
  */
 @Private
-public class FetchFailedException extends Exception {
-
+public interface ShuffleBlockMetadata extends Serializable {
 
 }

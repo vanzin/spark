@@ -1552,7 +1552,8 @@ private[spark] class DAGScheduler(
             mapOutputTracker.unregisterAllMapOutput(shuffleId)
           } else if (mapIndex != -1) {
             // Mark the map whose fetch failed as broken in the map stage
-            mapOutputTracker.handleFetchFailure(shuffleId, mapIndex, reduceId)
+            // TODO: fill in the block metadata from the exception
+            mapOutputTracker.handleFetchFailure(shuffleId, null /* metadata goes here */)
           }
 
           if (failedStage.rdd.isBarrier()) {

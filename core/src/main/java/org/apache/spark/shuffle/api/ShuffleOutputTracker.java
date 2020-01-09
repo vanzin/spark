@@ -41,8 +41,7 @@ public interface ShuffleOutputTracker {
   // Called by DAGScheduler when fetch failure happens.
   void handleFetchFailure(
       int shuffleId,
-      int mapIndex,
-      int reduceId);
+      ShuffleBlockMetadata block);
 
   // Called by DAGScheduler when all output for a given shuffle ID needs to be invalidated, e.g.
   // when a barrier stage task fails, or when a non-deterministic shuffle map stage fails.

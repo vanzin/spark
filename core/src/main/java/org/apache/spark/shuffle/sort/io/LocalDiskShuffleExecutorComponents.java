@@ -34,6 +34,7 @@ import org.apache.spark.TaskContext;
 import org.apache.spark.serializer.SerializerManager;
 import org.apache.spark.shuffle.BlockStoreShuffleReader;
 import org.apache.spark.shuffle.api.ShuffleExecutorComponents;
+import org.apache.spark.shuffle.api.ShuffleInputStream;
 import org.apache.spark.shuffle.api.ShuffleMapOutputWriter;
 import org.apache.spark.shuffle.api.ShuffleMetadata;
 import org.apache.spark.shuffle.IndexShuffleBlockResolver;
@@ -102,7 +103,7 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
   }
 
   @Override
-  public Iterator<InputStream> readShuffle(
+  public Iterator<ShuffleInputStream> readShuffle(
       int shuffleId,
       int startPartition,
       int endPartition,
@@ -112,7 +113,7 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
 
     LocalDiskShuffleMetadata localMetadata = (LocalDiskShuffleMetadata) metadata.get();
 
-    scala.collection.Iterator<InputStream> blockIter = new ShuffleBlockFetcherIterator(
+    scala.collection.Iterator<ShuffleInputStream> blockIter = new ShuffleBlockFetcherIterator(
       TaskContext.get(),
       blockManager.blockStoreClient(),
       blockManager,
@@ -129,7 +130,7 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
       TaskContext.get().taskMetrics().createTempShuffleReadMetrics(),
       false /* see BlockStoreShuffleReader; need to implement this somehow */);
 
-    return new Iterator<InputStream>() {
+    return new Iterator<ShuffleInputStream>() {
 
       @Override
       public boolean hasNext() {
@@ -137,7 +138,7 @@ public class LocalDiskShuffleExecutorComponents implements ShuffleExecutorCompon
       }
 
       @Override
-      public InputStream next() {
+      public ShuffleInputStream next() {
         return blockIter.next();
       }
 

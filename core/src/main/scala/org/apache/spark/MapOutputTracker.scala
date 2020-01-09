@@ -35,7 +35,7 @@ import org.apache.spark.io.CompressionCodec
 import org.apache.spark.rpc.{RpcCallContext, RpcEndpoint, RpcEndpointRef, RpcEnv}
 import org.apache.spark.scheduler.MapStatus
 import org.apache.spark.shuffle.MetadataFetchFailedException
-import org.apache.spark.shuffle.api.{MapOutputMetadata, ShuffleMetadata, ShuffleOutputTracker}
+import org.apache.spark.shuffle.api._
 import org.apache.spark.storage.{BlockId, BlockManagerId, ShuffleBlockId}
 import org.apache.spark.util._
 
@@ -267,9 +267,9 @@ private[spark] class MapOutputTrackerMaster(
   }
 
   /** Unregister map output information of the given shuffle, mapper and block manager */
-  def handleFetchFailure(shuffleId: Int, mapIndex: Int, reduceId: Int): Unit = {
+  def handleFetchFailure(shuffleId: Int, block: ShuffleBlockMetadata): Unit = {
     outputTracker.foreach { ot =>
-      ot.handleFetchFailure(shuffleId, mapIndex, reduceId)
+      ot.handleFetchFailure(shuffleId, block)
     }
   }
 

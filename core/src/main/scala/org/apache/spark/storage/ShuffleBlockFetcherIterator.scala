@@ -35,6 +35,8 @@ import org.apache.spark.network.buffer.{FileSegmentManagedBuffer, ManagedBuffer}
 import org.apache.spark.network.shuffle._
 import org.apache.spark.network.util.TransportConf
 import org.apache.spark.shuffle.{FetchFailedException, ShuffleReadMetricsReporter}
+import org.apache.spark.shuffle.api.{ShuffleBlockMetadata, ShuffleInputStream}
+import org.apache.spark.shuffle.sort.io.LocalShuffleBlockMetadata
 import org.apache.spark.util.{CompletionIterator, TaskCompletionListener, Utils}
 
 /**
@@ -82,7 +84,7 @@ final class ShuffleBlockFetcherIterator(
     detectCorruptUseExtraMemory: Boolean,
     shuffleMetrics: ShuffleReadMetricsReporter,
     doBatchFetch: Boolean)
-  extends Iterator[InputStream] with DownloadFileManager with Logging {
+  extends Iterator[ShuffleInputStream] with DownloadFileManager with Logging {
 
   import ShuffleBlockFetcherIterator._
 
@@ -561,7 +563,7 @@ final class ShuffleBlockFetcherIterator(
    *
    * Throws a FetchFailedException if the next block could not be fetched.
    */
-  override def next(): InputStream = {
+  override def next(): ShuffleInputStream = {
     if (!hasNext) {
       throw new NoSuchElementException()
     }
@@ -776,7 +778,7 @@ private class BufferReleasingInputStream(
     private val mapIndex: Int,
     private val address: BlockManagerId,
     private val detectCorruption: Boolean)
-  extends InputStream {
+  extends ShuffleInputStream {
   private[this] var closed = false
 
   override def read(): Int = {
@@ -834,6 +836,8 @@ private class BufferReleasingInputStream(
   }
 
   override def reset(): Unit = delegate.reset()
+
+  override def blockMetadata(): ShuffleBlockMetadata = new LocalShuffleBlockMetadata(blockId)
 }
 
 /**
