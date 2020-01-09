@@ -837,7 +837,9 @@ private class BufferReleasingInputStream(
 
   override def reset(): Unit = delegate.reset()
 
-  override def blockMetadata(): ShuffleBlockMetadata = new LocalShuffleBlockMetadata(blockId)
+  override def blockMetadata(): ShuffleBlockMetadata = {
+    new LocalShuffleBlockMetadata(blockId, mapIndex)
+  }
 }
 
 /**

@@ -23,9 +23,11 @@ import org.apache.spark.storage.BlockId;
 public class LocalShuffleBlockMetadata implements ShuffleBlockMetadata {
 
   public final BlockId blockId;
+  public final int mapIndex;
 
-  public LocalShuffleBlockMetadata(BlockId blockId) {
+  public LocalShuffleBlockMetadata(BlockId blockId, int mapIndex) {
     this.blockId = blockId;
+    this.mapIndex = mapIndex;
   }
 
 }
