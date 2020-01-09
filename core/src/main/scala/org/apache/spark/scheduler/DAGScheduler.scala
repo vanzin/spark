@@ -39,6 +39,7 @@ import org.apache.spark.network.util.JavaUtils
 import org.apache.spark.partial.{ApproximateActionListener, ApproximateEvaluator, PartialResult}
 import org.apache.spark.rdd.{DeterministicLevel, RDD, RDDCheckpointData}
 import org.apache.spark.rpc.RpcTimeout
+import org.apache.spark.shuffle.sort.io.LocalShuffleBlockMetadata
 import org.apache.spark.storage._
 import org.apache.spark.storage.BlockManagerMessages.BlockManagerHeartbeat
 import org.apache.spark.util._
@@ -1678,25 +1679,26 @@ private[spark] class DAGScheduler(
 
           // TODO: mark the executor as failed only if there were lots of fetch failures on it
           // TODO: see what to do with this when we're using a shuffle plugin.
-          /*
-          if (bmAddress != null) {
-            val hostToUnregisterOutputs = if (env.blockManager.externalShuffleServiceEnabled &&
-              unRegisterOutputOnHostOnFetchFailure) {
-              // We had a fetch failure with the external shuffle service, so we
-              // assume all shuffle data on the node is bad.
-              Some(bmAddress.host)
-            } else {
-              // Unregister shuffle data just for one executor (we don't have any
-              // reason to believe shuffle data has been lost for the entire host).
-              None
-            }
-            removeExecutorAndUnregisterOutputs(
-              execId = bmAddress.executorId,
-              fileLost = true,
-              hostToUnregisterOutputs = hostToUnregisterOutputs,
-              maybeEpoch = Some(task.epoch))
+          metadata match {
+            case meta: LocalShuffleBlockMetadata if meta.blockManagerId != null =>
+              val hostToUnregisterOutputs = if (env.blockManager.externalShuffleServiceEnabled &&
+                unRegisterOutputOnHostOnFetchFailure) {
+                // We had a fetch failure with the external shuffle service, so we
+                // assume all shuffle data on the node is bad.
+                Some(meta.blockManagerId.host)
+              } else {
+                // Unregister shuffle data just for one executor (we don't have any
+                // reason to believe shuffle data has been lost for the entire host).
+                None
+              }
+              removeExecutorAndUnregisterOutputs(
+                execId = meta.blockManagerId.executorId,
+                fileLost = true,
+                hostToUnregisterOutputs = hostToUnregisterOutputs,
+                maybeEpoch = Some(task.epoch))
+
+            case _ =>
           }
-          */
         }
 
       case failure: TaskFailedReason if task.isBarrier =>

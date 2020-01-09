@@ -32,6 +32,7 @@ import org.apache.spark.internal.{config, Logging}
 import org.apache.spark.internal.config._
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.scheduler.SchedulingMode._
+import org.apache.spark.shuffle.sort.io.LocalShuffleBlockMetadata
 import org.apache.spark.util.{AccumulatorV2, Clock, LongAccumulator, SystemClock, Utils}
 import org.apache.spark.util.collection.MedianHeap
 
@@ -787,13 +788,16 @@ private[spark] class TaskSetManager(
         }
         isZombie = true
 
-        // TODO: need to figure out what to do here when using a shuffle plugin.
-        /*
-        if (fetchFailed.bmAddress != null) {
-          blacklistTracker.foreach(_.updateBlacklistForFetchFailure(
-            fetchFailed.bmAddress.host, fetchFailed.bmAddress.executorId))
+        // TODO: maybe make this more generic so plugins can have some control over this.
+        fetchFailed.metadata match {
+          case meta: LocalShuffleBlockMetadata =>
+            if (meta.blockManagerId != null) {
+              blacklistTracker.foreach(_.updateBlacklistForFetchFailure(
+                meta.blockManagerId.host, meta.blockManagerId.executorId))
+            }
+
+          case _ =>
         }
-        */
 
         None
 

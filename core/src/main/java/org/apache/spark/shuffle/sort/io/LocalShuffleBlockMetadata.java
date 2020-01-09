@@ -19,13 +19,16 @@ package org.apache.spark.shuffle.sort.io;
 
 import org.apache.spark.shuffle.api.ShuffleBlockMetadata;
 import org.apache.spark.storage.BlockId;
+import org.apache.spark.storage.BlockManagerId;
 
 public class LocalShuffleBlockMetadata implements ShuffleBlockMetadata {
 
+  public final BlockManagerId blockManagerId;
   public final BlockId blockId;
   public final int mapIndex;
 
-  public LocalShuffleBlockMetadata(BlockId blockId, int mapIndex) {
+  public LocalShuffleBlockMetadata(BlockManagerId blockManagerId, BlockId blockId, int mapIndex) {
+    this.blockManagerId = blockManagerId;
     this.blockId = blockId;
     this.mapIndex = mapIndex;
   }

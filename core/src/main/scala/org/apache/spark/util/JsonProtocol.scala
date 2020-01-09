@@ -36,6 +36,7 @@ import org.apache.spark.rdd.RDDOperationScope
 import org.apache.spark.resource.ResourceInformation
 import org.apache.spark.scheduler._
 import org.apache.spark.scheduler.cluster.ExecutorInfo
+import org.apache.spark.shuffle.sort.io.LocalShuffleBlockMetadata
 import org.apache.spark.storage._
 
 /**
@@ -416,10 +417,14 @@ private[spark] object JsonProtocol {
     val reason = Utils.getFormattedClassName(taskEndReason)
     val json: JObject = taskEndReason match {
       case fetchFailed: FetchFailed =>
-        // TODO: fix this for shuffle plugins?
-        // val blockManagerAddress = Option(fetchFailed.bmAddress).
-        //  map(blockManagerIdToJson).getOrElse(JNothing)
-        // ("Block Manager Address" -> blockManagerAddress) ~
+        // TODO: kinda hacky. assumes internal shuffle plugin. Some info not currently available
+        // in the new API.
+        val blockManagerOption = fetchFailed.metadata match {
+          case meta: LocalShuffleBlockMetadata => Option(meta.blockManagerId)
+          case _ => None
+        }
+        val blockManagerAddress = blockManagerOption.map(blockManagerIdToJson).getOrElse(JNothing)
+        ("Block Manager Address" -> blockManagerAddress) ~
         ("Shuffle ID" -> fetchFailed.shuffleId) ~
         // ("Map ID" -> fetchFailed.mapId) ~
         ("Map Index" -> fetchFailed.mapIndex) ~
@@ -985,8 +990,16 @@ private[spark] object JsonProtocol {
         val mapIndex = (json \ "Map Index").extract[Int]
         val reduceId = (json \ "Reduce ID").extract[Int]
         val message = jsonOption(json \ "Message").map(_.extract[String])
-        // TODO: fix this for shuffle plugins.
-        new FetchFailed(shuffleId, mapIndex, null, message.getOrElse("Unknown reason"))
+        // TODO: assumes internal shuffle plugin. Super hacky.
+        val metadata = if (blockManagerAddress != null) {
+          new LocalShuffleBlockMetadata(blockManagerAddress,
+            ShuffleBlockId(shuffleId, mapId, reduceId),
+            mapIndex)
+        } else {
+          null
+        }
+
+        new FetchFailed(shuffleId, mapIndex, metadata, message.getOrElse("Unknown reason"))
       case `exceptionFailure` =>
         val className = (json \ "Class Name").extract[String]
         val description = (json \ "Description").extract[String]
